@@ -5,19 +5,19 @@ from core.database import get_db
 from models.order import Review
 from models.user import User
 from schemas.order import ReviewResponse
-from schemas.user import UserResponse, UserUpdate
+from schemas.user import PublicUserResponse, PrivateUserResponse, UserUpdate
 from core.security import get_current_active_user, require_role
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=PublicUserResponse)
 def get_user_profile(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-@router.patch("/me", response_model=UserResponse)
+@router.patch("/me", response_model=PrivateUserResponse)
 def update_user_me(user_update: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     update_data = user_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():

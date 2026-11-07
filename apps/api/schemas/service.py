@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Any
 from datetime import datetime
 from schemas.user import UserResponse
@@ -25,11 +25,10 @@ class CategoryResponse(CategoryBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ServiceMediaBase(BaseModel):
-    media_type: str # IMAGE, VIDEO
+    media_type: str #image , video 
     url: str
     thumbnail_url: Optional[str] = None
     sort_order: int = 0
@@ -39,11 +38,10 @@ class ServiceMediaCreate(ServiceMediaBase):
 
 class ServiceMediaResponse(ServiceMediaBase):
     id: int
-    service_id: int
+    service_id: int 
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ServicePackageBase(BaseModel):
     name: str
@@ -70,8 +68,7 @@ class ServicePackageResponse(ServicePackageBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ServiceBase(BaseModel):
     title: str
@@ -104,11 +101,21 @@ class ServiceResponse(ServiceBase):
     seller: Optional[UserResponse] = None
     media: List[ServiceMediaResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+class ServiceReviewItem(BaseModel):
+    id: int
+    rating: int
+    comment: Optional[str] = None
+    reviewer_id: int
+    created_at: datetime
+    reviewer: Optional[UserResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 class ServiceDetailResponse(ServiceResponse):
     packages: List[ServicePackageResponse] = []
+    reviews: List[ServiceReviewItem] = []
 
 class PaginatedServiceResponse(BaseModel):
     data: List[ServiceResponse]

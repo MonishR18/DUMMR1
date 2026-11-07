@@ -27,7 +27,9 @@ def get_buyer_dashboard(db: Session = Depends(get_db), current_user: User = Depe
         "pending_orders": len(pending_orders),
         "cancelled_orders": len([o for o in orders if o.status == OrderStatus.CANCELLED]),
         "total_spent": round(sum(o.amount for o in completed_orders), 2),
+        "spend": round(sum(o.amount for o in completed_orders), 2),
         "favorites": db.query(ServiceFavorite).filter(ServiceFavorite.user_id == current_user.id).count(),
+        "saved_services": db.query(ServiceFavorite).filter(ServiceFavorite.user_id == current_user.id).count(),
     }
 
 

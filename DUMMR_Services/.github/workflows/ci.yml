@@ -1,0 +1,33 @@
+name: DUMMR Frontend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Frontend Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit & smoke tests
+        run: CI=true npm test -- --watchAll=false
+
+      - name: Build static production bundle
+        run: npm run build
+        env:
+          REACT_APP_API_URL: https://api.dummr.services

@@ -40,6 +40,7 @@ class Service(Base):
     packages = relationship("ServicePackage", back_populates="service", cascade="all, delete-orphan")
     media = relationship("ServiceMedia", back_populates="service", cascade="all, delete-orphan")
     favorites = relationship("ServiceFavorite", back_populates="service", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="service", cascade="all, delete-orphan")
 
 class ServicePackage(Base):
     __tablename__ = "service_packages"

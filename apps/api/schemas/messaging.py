@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from schemas.user import UserResponse
@@ -18,8 +18,7 @@ class MessageResponse(MessageBase):
     
     sender: Optional[UserResponse] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ConversationBase(BaseModel):
     order_id: Optional[int] = None
@@ -31,11 +30,11 @@ class ConversationResponse(ConversationBase):
     id: int
     buyer_id: int
     seller_id: int
+    unread_count: int = 0
     created_at: datetime
     updated_at: Optional[datetime] = None
     
     buyer: Optional[UserResponse] = None
     seller: Optional[UserResponse] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from core.database import Base
@@ -14,12 +14,15 @@ class User(Base):
     college = Column(String, nullable=True)
     role = Column(String, default="CLIENT")
     profile_image = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
     bio = Column(String, nullable=True)
     skills = Column(String, nullable=True) # or JSON
     expertise = Column(String, nullable=True)
-    rating = Column(Integer, default=0)
+    specialty = Column(String, nullable=True)
+    rating = Column(Float, default=0.0)
     completed_orders = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -32,7 +35,7 @@ class User(Base):
     following = relationship("Follow", foreign_keys="[Follow.follower_id]", back_populates="follower", cascade="all, delete-orphan")
     
     # Marketplace Relationships
-    client_tasks = relationship("Task", back_populates="creator", cascade="all, delete-orphan")
+    client_tasks = relationship("Task", foreign_keys="[Task.creator_id]", back_populates="creator", cascade="all, delete-orphan")
     applications = relationship("TaskApplication", back_populates="worker", cascade="all, delete-orphan")
     
     # Service Marketplace

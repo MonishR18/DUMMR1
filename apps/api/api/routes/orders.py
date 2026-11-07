@@ -9,7 +9,7 @@ from models.order import Order, OrderStatus, Review
 from models.service import Service, ServicePackage
 from models.notification import Notification
 from schemas.order import OrderCreate, OrderResponse, OrderAction, ReviewCreate, ReviewResponse
-from core.security import get_current_active_user
+from core.security import get_current_active_user, require_verified_user, require_client
 from models.user import User
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -40,10 +40,18 @@ def _ensure_valid_transition(order: Order, new_status: OrderStatus):
 
 
 def _create_conversation_for_order(db: Session, buyer_id: int, seller_id: int, order_id: int | None = None):
-    existing = db.query(Conversation).filter(
-        ((Conversation.buyer_id == buyer_id) & (Conversation.seller_id == seller_id)) |
-        ((Conversation.buyer_id == seller_id) & (Conversation.seller_id == buyer_id))
-    ).first()
+    if order_id:
+        existing = db.query(Conversation).filter(
+            Conversation.order_id == order_id,
+            ((Conversation.buyer_id == buyer_id) & (Conversation.seller_id == seller_id)) |
+            ((Conversation.buyer_id == seller_id) & (Conversation.seller_id == buyer_id))
+        ).first()
+    else:
+        existing = db.query(Conversation).filter(
+            Conversation.order_id.is_(None),
+            ((Conversation.buyer_id == buyer_id) & (Conversation.seller_id == seller_id)) |
+            ((Conversation.buyer_id == seller_id) & (Conversation.seller_id == buyer_id))
+        ).first()
     if existing:
         return existing
 
@@ -55,7 +63,8 @@ def _create_conversation_for_order(db: Session, buyer_id: int, seller_id: int, o
 
 
 @router.post("", response_model=OrderResponse)
-def create_order(order: OrderCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def create_order(order: OrderCreate, db: Session = Depends(get_db), current_user: User = Depends(require_client)):
+    require_verified_user(current_user)
     service = db.query(Service).filter(Service.id == order.service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")

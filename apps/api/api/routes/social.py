@@ -1,22 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from typing import List
 from core.database import get_db
 from models.social import Post, Comment, Like, Bookmark, Follow
+from models.moderation import Block
 from models.user import User
-from schemas.social import PostCreate, PostResponse, CommentBase, CommentCreate, CommentResponse
+from schemas.social import PostCreate, PostResponse, CommentBase, CommentResponse
+from core.security import get_current_active_user, require_verified_user, ALGORITHM
+from core.limiter import limiter
+from core.config import settings
+from jose import jwt, JWTError
 
-router = APIRouter(prefix="/api", tags=["social"])
+router = APIRouter(prefix="/api", tags=["social (deprecated)"], deprecated=True)
 
-from core.security import get_current_active_user
+oauth2_optional = OAuth2PasswordBearer(tokenUrl="api/auth/login", auto_error=False)
+
+def get_optional_user(token: Optional[str] = Depends(oauth2_optional), db: Session = Depends(get_db)) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id:
+            return db.query(User).filter(User.id == int(user_id)).first()
+    except JWTError:
+        pass
+    return None
 
 @router.get("/feed", response_model=List[PostResponse])
-def get_feed(db: Session = Depends(get_db), skip: int = 0, limit: int = 20):
-    posts = db.query(Post).order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
-    return posts
+def get_feed(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+    skip: int = 0,
+    limit: int = 20
+):
+    query = db.query(Post)
+    if current_user:
+        # Enforce blocks in feed: hide posts from blocked users or users who blocked current_user
+        blocked_user_ids = [
+            b[0] for b in db.query(Block.blocked_id).filter(Block.blocker_id == current_user.id).all()
+        ] + [
+            b[0] for b in db.query(Block.blocker_id).filter(Block.blocked_id == current_user.id).all()
+        ]
+        if blocked_user_ids:
+            query = query.filter(Post.author_id.notin_(blocked_user_ids))
+    return query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
 
 @router.post("/posts", response_model=PostResponse)
-def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+@limiter.limit("10/minute")
+def create_post(
+    request: Request,
+    post: PostCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_verified_user)
+):
     user_id = current_user.id
     db_post = Post(content=post.content, author_id=user_id)
     db.add(db_post)
@@ -66,7 +104,14 @@ def get_comments(post_id: int, db: Session = Depends(get_db)):
     return comments
 
 @router.post("/posts/{post_id}/comments", response_model=CommentResponse)
-def create_comment(post_id: int, comment: CommentBase, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+@limiter.limit("20/minute")
+def create_comment(
+    request: Request,
+    post_id: int,
+    comment: CommentBase,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
     user_id = current_user.id
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:

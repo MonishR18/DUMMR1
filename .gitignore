@@ -1,5 +1,9 @@
-.env
+.env*
+!.env.example
+*.db
+*_out*.txt
 .venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -13,3 +17,6 @@ dist/
 build/
 .DS_Store
 coverage/
+uploads/
+
+

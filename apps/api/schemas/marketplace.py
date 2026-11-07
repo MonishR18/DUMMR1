@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from schemas.social import UserBasic
@@ -17,12 +17,12 @@ class TaskResponse(TaskBase):
     id: int
     status: str
     creator_id: int
+    assigned_worker_id: Optional[int] = None
     created_at: datetime
     creator: Optional[UserBasic] = None
+    assigned_worker: Optional[UserBasic] = None
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TaskApplicationBase(BaseModel):
     message: Optional[str] = None
@@ -39,9 +39,7 @@ class TaskApplicationResponse(TaskApplicationBase):
     created_at: datetime
     worker: Optional[UserBasic] = None
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TaskDetailResponse(TaskResponse):
     applications: List[TaskApplicationResponse] = []

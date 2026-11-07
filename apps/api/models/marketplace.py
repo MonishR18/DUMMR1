@@ -11,14 +11,16 @@ class Task(Base):
     description = Column(Text, nullable=False)
     category = Column(String, nullable=True)
     budget = Column(Float, nullable=True)
-    status = Column(String, default="OPEN") # OPEN, ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED
+    status = Column(String, default="OPEN", index=True) # OPEN, ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED
     deadline = Column(DateTime(timezone=True), nullable=True)
-    creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_worker_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    creator = relationship("User", back_populates="client_tasks")
+    creator = relationship("User", foreign_keys=[creator_id], back_populates="client_tasks")
+    assigned_worker = relationship("User", foreign_keys=[assigned_worker_id])
     applications = relationship("TaskApplication", back_populates="task", cascade="all, delete-orphan")
 
 class TaskApplication(Base):

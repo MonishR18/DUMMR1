@@ -63,4 +63,4 @@ class Review(Base):
     order = relationship("Order", back_populates="reviews")
     reviewer = relationship("User", foreign_keys=[reviewer_id])
     seller = relationship("User", foreign_keys=[seller_id])
-    service = relationship("Service")
+    service = relationship("Service", back_populates="reviews")

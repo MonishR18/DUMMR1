@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Any
 from datetime import datetime
 from schemas.user import UserResponse
@@ -44,8 +44,7 @@ class OrderResponse(OrderBase):
     service: Optional[ServiceResponse] = None
     package: Optional[ServicePackageResponse] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ReviewBase(BaseModel):
     rating: int = Field(ge=1, le=5)
@@ -65,5 +64,4 @@ class ReviewResponse(ReviewBase):
     
     reviewer: Optional[UserResponse] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

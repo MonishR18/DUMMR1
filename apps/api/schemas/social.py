@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 
@@ -7,9 +7,7 @@ class UserBasic(BaseModel):
     name: str
     username: str
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PostBase(BaseModel):
     content: str
@@ -23,9 +21,7 @@ class PostResponse(PostBase):
     created_at: datetime
     author: Optional[UserBasic] = None
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class CommentBase(BaseModel):
     content: str
@@ -40,6 +36,4 @@ class CommentResponse(CommentBase):
     created_at: datetime
     author: Optional[UserBasic] = None
 
-    class Config:
-        orm_mode = True
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
