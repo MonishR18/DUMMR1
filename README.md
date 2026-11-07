@@ -1,66 +1,85 @@
-# DUMMR
+# DUMMR1 — Independent Services Marketplace Platform
 
-DUMMR is a marketplace platform for independent service providers and clients (Fiverr-style freelance and campus services marketplace).
+A production-ready, full-stack marketplace platform for independent service providers and clients (Fiverr-style freelance and campus services platform).
 
-## Overview
+---
 
-The platform supports two primary user roles:
-- **Provider (Seller)**: Publishes service offerings with tiered packages (Basic, Standard, Premium), manages orders through a fulfillment pipeline, and tracks performance on the Seller Dashboard.
-- **Client (Buyer)**: Explores and searches service listings, places orders, communicates with providers via threaded messaging, and reviews completed work.
+## 1. System Overview
 
-## Repository Structure
+- **Provider (Seller)**: Publishes service offerings with tiered packages (Basic, Standard, Premium), manages orders through a multi-stage fulfillment pipeline, communicates via threaded messaging, and tracks performance and revenue on the Seller Dashboard.
+- **Client (Buyer)**: Explores and searches service listings with category & price filtering, places orders with custom project requirements, communicates in real time, pays via escrow, and reviews completed work.
+
+---
+
+## 2. Monorepo Structure
 
 ```
 .
-├── docker-compose.yml        # PostgreSQL 15 & Redis 7 services
+├── DUMMR_Services/           # React 19 SPA frontend (Create React App + React Router)
+│   ├── src/                  # Modular components, contexts, and pages
+│   ├── public/               # Static assets & SPA redirect configs (_redirects, vercel.json)
+│   ├── Dockerfile            # Multi-stage production Nginx container
+│   └── package.json          # Dependencies & scripts
+│
 ├── apps/
 │   ├── api/                  # FastAPI backend (SQLAlchemy 2, Alembic, Pydantic v2)
+│   │   ├── api/routes/       # Endpoints: auth, services, orders, payments, storage, messaging
+│   │   ├── core/             # Security, config, email, storage, rate limiting
+│   │   ├── models/           # SQLAlchemy ORM models
+│   │   ├── schemas/          # Pydantic v2 validation schemas
+│   │   ├── alembic/          # Declarative database migrations
+│   │   ├── tests/            # Automated test suite (19 passing pytest tests)
+│   │   └── Dockerfile        # Production multi-worker Python 3.11 container
 │   └── web/                  # Next.js web application
-└── ../DUMMR_Services/        # React marketplace frontend application
+│
+├── .github/workflows/        # Automated CI/CD workflows for backend & frontend
+├── docker-compose.yml        # PostgreSQL 15, Redis 7, Backend API, and Frontend stack
+├── DEPLOYMENT.md             # Comprehensive production deployment guide
+└── README.md
 ```
 
-## Backend Architecture (`apps/api`)
+---
 
-- **Framework**: FastAPI with asynchronous endpoints and Pydantic v2 schemas.
-- **Database**: PostgreSQL with SQLAlchemy 2.0 ORM and Alembic migrations.
-- **Cache & Token Store**: Redis for token revocation blocklists and view counting (with in-memory fallback).
-- **Authentication**: Bcrypt password hashing, JWT access & refresh tokens, token revocation, role guards (`CLIENT`, `PROVIDER`, `ADMIN`), and email verification.
-- **Rate Limiting**: SlowAPI rate limiting enabled on authentication and write endpoints.
+## 3. Quick Start (Local Development)
 
-## Getting Started
-
-### 1. Prerequisites
+### Prerequisites
 - Docker & Docker Compose
+- Node.js 18+ & npm
 - Python 3.11+
-- Node.js 18+
 
-### 2. Start Services
-Start the local PostgreSQL and Redis containers:
+### 1. Launch Database & Cache
 ```bash
-docker compose up -d
+docker compose up -d db redis
 ```
-- PostgreSQL: `localhost:5433` (Database: `dummr_db`, User: `dummr_user`)
-- Redis: `localhost:6380`
 
-### 3. Setup the Backend API
+### 2. Run Backend API
 ```bash
 cd apps/api
-cp .env.example .env
-python3 -m venv venv
-source venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
-uvicorn main:app --reload --port 8000
+python scripts/seed_demo_data.py
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
-- API Docs: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/health`
+API Documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-### 4. Running Tests
+### 3. Run Frontend
 ```bash
-cd apps/api
-pytest -v
+cd DUMMR_Services
+npm install
+npm start
 ```
+Frontend will be available at [http://localhost:3000](http://localhost:3000).
 
-## Environment Variables
+---
 
-See [`apps/api/.env.example`](apps/api/.env.example) for all supported configuration options including database URLs, JWT secret keys, CORS origins, SMTP email settings, cloud storage (S3/Cloudinary), and payment gateways (Razorpay/Stripe).
+## 4. Pre-Seeded Demo Accounts
+
+- **Provider**: `john.studio@dummr.services` / `Password123!`
+- **Client**: `sarah.client@dummr.services` / `Password123!`
+
+---
+
+## 5. Deployment
+
+Refer to [`DEPLOYMENT.md`](./DEPLOYMENT.md) for full instructions on deploying to Render, Railway, Fly.io, Vercel, Netlify, or self-hosted Docker environments.
