@@ -67,5 +67,6 @@ jobs:
           SECRET_KEY: testsecretkey12345testsecretkey12345
           JWT_SECRET_KEY: testsecretkey12345testsecretkey12345
           ENVIRONMENT: test
+          PYTHONPATH: .
         run: |
           pytest -v
