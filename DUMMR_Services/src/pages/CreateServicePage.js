@@ -1,9 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchCategories, createService, createServicePackage, publishService } from '../api';
+import {
+  fetchCategories,
+  createService,
+  createServicePackage,
+  publishService,
+  uploadFile,
+  addServiceMedia,
+} from '../api';
 
 export default function CreateServicePage({ onNotice }) {
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
+
   const [categories, setCategories] = useState([]);
   const [isLoadingCats, setIsLoadingCats] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -11,8 +20,15 @@ export default function CreateServicePage({ onNotice }) {
 
   // Form Fields
   const [title, setTitle] = useState('');
+  const [slug, setSlug] = useState('');
+  const [isSlugCustomized, setIsSlugCustomized] = useState(false);
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
+
+  // Media upload state
+  const [mediaFile, setMediaFile] = useState(null);
+  const [mediaPreview, setMediaPreview] = useState('');
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
 
   // Packages state
   const [basicPrice, setBasicPrice] = useState(25);
@@ -69,42 +85,90 @@ export default function CreateServicePage({ onNotice }) {
     };
   }, []);
 
+  const handleTitleChange = (e) => {
+    const val = e.target.value;
+    setTitle(val);
+    if (!isSlugCustomized) {
+      const generated = val
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+      setSlug(generated);
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMediaFile(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => setMediaPreview(ev.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      setMediaPreview('');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
     setIsSubmitting(true);
 
     try {
+      const finalSlug = slug.trim() || undefined;
       const createdService = await createService({
         title,
+        slug: finalSlug,
         description,
         category_id: Number(categoryId) || undefined,
       });
 
       const serviceId = createdService.id;
 
-      // Create packages
+      // Handle media upload if selected
+      if (mediaFile) {
+        setIsUploadingMedia(true);
+        try {
+          const uploadRes = await uploadFile(mediaFile, 'media');
+          if (uploadRes?.url) {
+            await addServiceMedia(serviceId, {
+              media_type: mediaFile.type.startsWith('video/') ? 'video' : 'image',
+              url: uploadRes.url,
+            });
+          }
+        } catch (mediaErr) {
+          console.warn('Media upload non-fatal failure:', mediaErr);
+        } finally {
+          setIsUploadingMedia(false);
+        }
+      }
+
+      // Create packages with name & JSON string features
       await Promise.allSettled([
         createServicePackage(serviceId, {
+          name: 'Basic',
           tier: 'basic',
           price: Number(basicPrice),
           delivery_days: Number(basicDelivery),
           revisions: Number(basicRevisions),
-          features: ['Basic deliverable', `${basicRevisions} Revision`],
+          features: JSON.stringify(['Basic deliverable', `${basicRevisions} Revision`]),
         }),
         createServicePackage(serviceId, {
+          name: 'Standard',
           tier: 'standard',
           price: Number(stdPrice),
           delivery_days: Number(stdDelivery),
           revisions: Number(stdRevisions),
-          features: ['Standard deliverable', `${stdRevisions} Revisions`, 'High resolution'],
+          features: JSON.stringify(['Standard deliverable', `${stdRevisions} Revisions`, 'High resolution']),
         }),
         createServicePackage(serviceId, {
+          name: 'Premium',
           tier: 'premium',
           price: Number(premPrice),
           delivery_days: Number(premDelivery),
           revisions: Number(premRevisions),
-          features: ['Full commercial deliverable', 'Source project files', 'Priority support'],
+          features: JSON.stringify(['Full commercial deliverable', 'Source project files', 'Priority support']),
         }),
       ]);
 
@@ -159,9 +223,29 @@ export default function CreateServicePage({ onNotice }) {
               className="form-input"
               placeholder="I will do something I am really good at..."
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={handleTitleChange}
               required
             />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="service-slug-input" className="form-label">
+              Service Slug (URL Identifier)
+            </label>
+            <input
+              id="service-slug-input"
+              type="text"
+              className="form-input"
+              placeholder="e.g. i-will-create-4k-video"
+              value={slug}
+              onChange={(e) => {
+                setSlug(e.target.value);
+                setIsSlugCustomized(true);
+              }}
+            />
+            <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+              Auto-generated from your title. Leave as is or customize.
+            </span>
           </div>
 
           <div className="form-group">
@@ -199,28 +283,41 @@ export default function CreateServicePage({ onNotice }) {
           </div>
 
           <div className="form-group">
-            <span className="form-label">Gallery &amp; Media</span>
+            <span className="form-label">Gallery &amp; Media Cover</span>
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+              onChange={handleFileSelect}
+            />
             <div className="gallery-dropzone-row">
               <div
                 className="dropzone-box"
-                onClick={() => {
-                  if (onNotice) onNotice('Dropzone ready. Uploading image preview...');
-                }}
+                style={{ cursor: 'pointer', border: mediaFile ? '2px solid #6366f1' : '2px dashed #cbd5e1' }}
+                onClick={() => fileInputRef.current?.click()}
               >
-                <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>📷</div>
-                <span className="btn-secondary">+ Add Image</span>
-              </div>
-
-              <div
-                className="dropzone-box"
-                onClick={() => {
-                  if (onNotice) onNotice('Dropzone ready. Uploading video preview...');
-                }}
-              >
-                <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>🎥</div>
-                <span className="btn-secondary">+ Add Video</span>
+                {mediaPreview ? (
+                  <img
+                    src={mediaPreview}
+                    alt="Media Preview"
+                    style={{ maxHeight: '90px', borderRadius: '8px', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>📷</div>
+                    <span className="btn-secondary">
+                      {mediaFile ? mediaFile.name : '+ Upload Cover Media'}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
+            {mediaFile && (
+              <span style={{ fontSize: '0.8rem', color: '#16a34a', marginTop: '6px', display: 'block' }}>
+                Selected: {mediaFile.name} ({(mediaFile.size / (1024 * 1024)).toFixed(2)} MB)
+              </span>
+            )}
           </div>
 
           <div className="form-group">
@@ -356,7 +453,7 @@ export default function CreateServicePage({ onNotice }) {
             <button
               type="submit"
               className="btn-primary"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isUploadingMedia}
             >
               {isSubmitting ? 'Publishing Service...' : 'Publish Service'}
             </button>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { fetchServiceById, createOrder, toggleSaveService } from '../api';
+import { fetchServiceById, createOrder, toggleSaveService, createReport } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 export default function ServiceDetailPage({ onNotice }) {
@@ -19,6 +19,11 @@ export default function ServiceDetailPage({ onNotice }) {
   const [orderRequirements, setOrderRequirements] = useState('');
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [orderError, setOrderError] = useState('');
+
+  // Report Modal state
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [isReporting, setIsReporting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -125,7 +130,9 @@ export default function ServiceDetailPage({ onNotice }) {
         { id: 103, tier: 'premium', price: 120, delivery_days: 7, revisions: 99, features: ['Full commercial delivery'] },
       ];
 
-  const currentPkg = packagesList.find((p) => p.tier?.toLowerCase() === selectedPackageTier.toLowerCase()) || packagesList[0];
+  const currentPkg = packagesList.find(
+    (p) => (p.tier || p.name)?.toLowerCase() === selectedPackageTier.toLowerCase()
+  ) || packagesList[0];
 
   const handleToggleSave = async () => {
     if (!currentUser) {
@@ -140,6 +147,30 @@ export default function ServiceDetailPage({ onNotice }) {
       }
     } catch (err) {
       setIsSaved(!isSaved);
+    }
+  };
+
+  const handleReportService = async (e) => {
+    e.preventDefault();
+    if (!currentUser) {
+      navigate('/login', { state: { from: location } });
+      return;
+    }
+    if (!reportReason.trim()) return;
+    setIsReporting(true);
+    try {
+      await createReport({
+        target_type: 'SERVICE',
+        target_id: service.id,
+        reason: reportReason.trim(),
+      });
+      if (onNotice) onNotice('Report submitted successfully to moderators.');
+      setShowReportModal(false);
+      setReportReason('');
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to submit report.');
+    } finally {
+      setIsReporting(false);
     }
   };
 
@@ -172,8 +203,9 @@ export default function ServiceDetailPage({ onNotice }) {
       });
 
       setShowOrderModal(false);
+      const pkgLabel = (currentPkg.tier || currentPkg.name || selectedPackageTier).toUpperCase();
       if (onNotice) {
-        onNotice(`Order placed successfully for ${currentPkg.tier.toUpperCase()} package!`);
+        onNotice(`Order placed successfully for ${pkgLabel} package!`);
       }
       navigate('/buyer/dashboard?tab=Active%20Orders');
     } catch (err) {
@@ -206,14 +238,24 @@ export default function ServiceDetailPage({ onNotice }) {
             <h1 className="detail-service-title" style={{ flex: 1 }}>
               {service.title}
             </h1>
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
-              onClick={handleToggleSave}
-            >
-              {isSaved ? '❤️ Saved' : '🤍 Save'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={handleToggleSave}
+              >
+                {isSaved ? '❤️ Saved' : '🤍 Save'}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '8px 12px', fontSize: '0.85rem' }}
+                onClick={() => setShowReportModal(true)}
+              >
+                🚩 Report
+              </button>
+            </div>
           </div>
 
           <div className="seller-header-bar">
@@ -454,6 +496,65 @@ export default function ServiceDetailPage({ onNotice }) {
                   disabled={isPlacingOrder}
                 >
                   {isPlacingOrder ? 'Processing Order...' : `Pay & Place Order ($${currentPkg.price})`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {showReportModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '24px',
+            }}
+          >
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '8px' }}>Report Service Storefront</h3>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+              Help keep DUMMR safe. Please let us know why you are reporting this service listing.
+            </p>
+            <form onSubmit={handleReportService}>
+              <textarea
+                rows="4"
+                className="form-textarea"
+                placeholder="Reason for report (e.g. copyright violation, misleading claims, prohibited items)..."
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                required
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setShowReportModal(false)}
+                  disabled={isReporting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ background: '#dc2626' }}
+                  disabled={isReporting}
+                >
+                  {isReporting ? 'Submitting...' : 'Submit Report'}
                 </button>
               </div>
             </form>

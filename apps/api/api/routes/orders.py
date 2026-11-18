@@ -63,8 +63,12 @@ def _create_conversation_for_order(db: Session, buyer_id: int, seller_id: int, o
 
 
 @router.post("", response_model=OrderResponse)
-def create_order(order: OrderCreate, db: Session = Depends(get_db), current_user: User = Depends(require_client)):
-    require_verified_user(current_user)
+def create_order(
+    order: OrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_client),
+    verified_user: User = Depends(require_verified_user),
+):
     service = db.query(Service).filter(Service.id == order.service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")

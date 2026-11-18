@@ -18,10 +18,13 @@ export default function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
-    // If provider tries to access buyer routes, or vice versa
-    const fallbackPath = currentUser.role === 'provider' ? '/seller/dashboard' : '/buyer/dashboard';
-    return <Navigate to={fallbackPath} replace />;
+  const userRole = (currentUser.role || '').toLowerCase();
+  if (allowedRoles) {
+    const normalizedAllowed = allowedRoles.map((r) => r.toLowerCase());
+    if (!normalizedAllowed.includes(userRole) && userRole !== 'admin') {
+      const fallbackPath = userRole === 'provider' ? '/seller/dashboard' : '/buyer/dashboard';
+      return <Navigate to={fallbackPath} replace />;
+    }
   }
 
   return children;

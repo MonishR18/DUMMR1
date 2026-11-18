@@ -5,10 +5,15 @@ import {
   fetchOrders,
   fetchSavedServices,
   completeOrder,
+  cancelOrder,
+  requestRevision,
   createReview,
   fetchConversations,
   fetchMessages,
   sendMessage,
+  markConversationRead,
+  blockUser,
+  createReport,
 } from '../api';
 import { useAuth } from '../context/AuthContext';
 
@@ -24,11 +29,11 @@ export default function BuyerDashboardPage({ onNotice }) {
     setSearchParams(newParams);
   };
 
-  // State
+  // State initialized to 0
   const [buyerMetrics, setBuyerMetrics] = useState({
-    active_orders_count: 2,
-    total_spend: 330,
-    saved_count: 2,
+    active_orders_count: 0,
+    total_spend: 0,
+    saved_count: 0,
   });
   const [orders, setOrders] = useState([]);
   const [savedServices, setSavedServices] = useState([]);
@@ -38,6 +43,16 @@ export default function BuyerDashboardPage({ onNotice }) {
   const [rating, setRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+
+  // Revision Modal
+  const [revisionOrder, setRevisionOrder] = useState(null);
+  const [revisionNote, setRevisionNote] = useState('');
+  const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
+
+  // Report Modal
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState('');
+  const [isReporting, setIsReporting] = useState(false);
 
   // Messaging State
   const [conversations, setConversations] = useState([]);
@@ -55,12 +70,12 @@ export default function BuyerDashboardPage({ onNotice }) {
       ]);
 
       if (dashRes.status === 'fulfilled' && dashRes.value) {
-        setBuyerMetrics((prev) => ({
-          ...prev,
-          active_orders_count: dashRes.value.active_orders_count ?? prev.active_orders_count,
-          total_spend: dashRes.value.spend ?? dashRes.value.total_spend ?? prev.total_spend,
-          saved_count: dashRes.value.saved_services ?? prev.saved_count,
-        }));
+        const val = dashRes.value;
+        setBuyerMetrics({
+          active_orders_count: val.active_orders ?? val.active_orders_count ?? 0,
+          total_spend: val.total_spent ?? val.spend ?? 0,
+          saved_count: val.saved_services ?? val.favorites ?? 0,
+        });
       }
 
       if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
@@ -71,7 +86,7 @@ export default function BuyerDashboardPage({ onNotice }) {
         setSavedServices(savedRes.value);
       }
     } catch (err) {
-      // Fallback retained
+      // Keep state clean
     }
   }, []);
 
@@ -86,60 +101,33 @@ export default function BuyerDashboardPage({ onNotice }) {
       const loadChats = async () => {
         try {
           const convList = await fetchConversations();
-          if (isMounted && Array.isArray(convList) && convList.length > 0) {
+          if (isMounted && Array.isArray(convList)) {
             setConversations(convList);
-            const activeConv = convList[activeThreadIndex] || convList[0];
-            if (activeConv?.id) {
-              const msgList = await fetchMessages(activeConv.id);
-              if (isMounted && Array.isArray(msgList)) {
-                setMessages(msgList);
+            if (convList.length > 0) {
+              const activeConv = convList[activeThreadIndex] || convList[0];
+              if (activeConv?.id) {
+                // Call markConversationRead to clear unread counts!
+                try {
+                  await markConversationRead(activeConv.id);
+                  activeConv.unread_count = 0;
+                } catch (readErr) {
+                  // Non-fatal
+                }
+
+                const msgList = await fetchMessages(activeConv.id);
+                if (isMounted && Array.isArray(msgList)) {
+                  setMessages(msgList);
+                }
               }
+            } else {
+              setMessages([]);
             }
-          } else if (isMounted) {
-            // Default demo threads
-            setConversations([
-              {
-                id: 1,
-                name: 'John Studio',
-                initials: 'JS',
-                color: '#7c3aed',
-                service: 'Video Editing – 4K Cinematic',
-                preview: 'Hi! I have uploaded the first cut of your 4K video.',
-                time: '2m ago',
-                unread: 2,
-              },
-              {
-                id: 2,
-                name: 'Sarah Tech',
-                initials: 'ST',
-                color: '#10b981',
-                service: 'Website Development – Full Stack',
-                preview: 'I have deployed the staging database for your site.',
-                time: '1h ago',
-                unread: 1,
-              },
-              {
-                id: 3,
-                name: 'Priya Design',
-                initials: 'PD',
-                color: '#f59e0b',
-                service: 'Logo Design – Brand Identity',
-                preview: 'Here are the 3 initial concept drafts for review.',
-                time: '3h ago',
-                unread: 0,
-              },
-            ]);
-            setMessages([
-              { from: 'them', text: 'Hey! Just wanted to confirm the order details before I start.', ts: '10:02 AM' },
-              { from: 'me', text: 'Sure! I need a 2-minute highlight reel from the raw footage.', ts: '10:08 AM' },
-              { from: 'them', text: 'Got it. Any specific colour grade style — warm, cool, or natural?', ts: '10:11 AM' },
-              { from: 'me', text: 'Warm and cinematic please. Think golden hour vibes.', ts: '10:14 AM' },
-              { from: 'them', text: 'Perfect. I will have a rough cut ready within 48 hours.', ts: '11:30 AM' },
-              { from: 'them', text: 'Hi! I have uploaded the first cut of your 4K video. Let me know what you think!', ts: '2:15 PM' },
-            ]);
           }
         } catch (err) {
-          // Demo fallback
+          if (isMounted) {
+            setConversations([]);
+            setMessages([]);
+          }
         }
       };
       loadChats();
@@ -157,16 +145,14 @@ export default function BuyerDashboardPage({ onNotice }) {
     setIsSendingMsg(true);
 
     const activeConv = conversations[activeThreadIndex];
-    if (activeConv?.id && typeof activeConv.id === 'number') {
+    if (activeConv?.id) {
       try {
         await sendMessage(activeConv.id, text);
         const updated = await fetchMessages(activeConv.id);
         setMessages(updated);
       } catch (err) {
-        setMessages((prev) => [...prev, { from: 'me', text, ts: 'Just now' }]);
+        setMessages((prev) => [...prev, { sender_id: currentUser?.id, content: text, created_at: new Date().toISOString() }]);
       }
-    } else {
-      setMessages((prev) => [...prev, { from: 'me', text, ts: 'Just now' }]);
     }
     setIsSendingMsg(false);
   };
@@ -195,8 +181,74 @@ export default function BuyerDashboardPage({ onNotice }) {
     }
   };
 
-  const activeOrdersList = orders.filter((o) => !['completed', 'cancelled', 'refunded'].includes(o.status));
-  const completedOrdersList = orders.filter((o) => ['completed', 'cancelled', 'refunded'].includes(o.status));
+  const handleRequestRevision = async (e) => {
+    e.preventDefault();
+    if (!revisionOrder || !revisionNote.trim()) return;
+    setIsSubmittingRevision(true);
+    try {
+      await requestRevision(revisionOrder.id, { message: revisionNote.trim() });
+      if (onNotice) onNotice(`Revision requested for Order #${revisionOrder.id}!`);
+      setRevisionOrder(null);
+      setRevisionNote('');
+      loadData();
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to request revision.');
+    } finally {
+      setIsSubmittingRevision(false);
+    }
+  };
+
+  const handleCancelOrder = async (orderId) => {
+    if (!window.confirm(`Are you sure you want to cancel order #${orderId}?`)) return;
+    try {
+      await cancelOrder(orderId);
+      if (onNotice) onNotice(`Order #${orderId} cancelled.`);
+      loadData();
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to cancel order.');
+    }
+  };
+
+  const handleBlockUserInChat = async () => {
+    const activeConv = conversations[activeThreadIndex];
+    const otherUserId = activeConv?.buyer_id === currentUser?.id ? activeConv?.seller_id : activeConv?.buyer_id;
+    if (!otherUserId) return;
+    if (!window.confirm('Block this user? You will no longer receive messages or orders from them.')) return;
+    try {
+      await blockUser(otherUserId);
+      if (onNotice) onNotice('User blocked.');
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to block user.');
+    }
+  };
+
+  const handleReportUserInChat = async (e) => {
+    e.preventDefault();
+    if (!reportTarget || !reportReason.trim()) return;
+    setIsReporting(true);
+    try {
+      await createReport({
+        target_type: 'USER',
+        target_id: reportTarget,
+        reason: reportReason.trim(),
+      });
+      if (onNotice) onNotice('Report submitted to moderators.');
+      setReportTarget(null);
+      setReportReason('');
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to submit report.');
+    } finally {
+      setIsReporting(false);
+    }
+  };
+
+  // Case-insensitive status filtering
+  const activeOrdersList = orders.filter((o) =>
+    !['COMPLETED', 'CANCELLED', 'REFUNDED'].includes((o.status || '').toUpperCase())
+  );
+  const completedOrdersList = orders.filter((o) =>
+    ['COMPLETED', 'CANCELLED', 'REFUNDED'].includes((o.status || '').toUpperCase())
+  );
 
   const navItems = [
     'Dashboard',
@@ -264,55 +316,84 @@ export default function BuyerDashboardPage({ onNotice }) {
             <div className="content-block">
               <h2 className="block-title">Active Order Progress</h2>
               {activeOrdersList.length > 0 ? (
-                activeOrdersList.map((ord) => (
-                  <div key={ord.id} className="progress-card">
-                    <div className="progress-header">
-                      <span>Order #{ord.id}: <strong>{ord.service?.title || ord.service_title || 'Custom Service'}</strong></span>
-                      <span>Price: <strong>${ord.price}</strong> • Status: <strong style={{ textTransform: 'capitalize' }}>{ord.status?.replace('_', ' ')}</strong></span>
-                    </div>
-                    <div className="progress-bar-bg">
-                      <div
-                        className="progress-bar-fill"
-                        style={{
-                          width: ord.status === 'delivered' ? '100%' : ord.status === 'in_progress' ? '65%' : '30%',
-                        }}
-                      />
-                    </div>
-                    {ord.status === 'delivered' && (
-                      <div style={{ marginTop: '12px', textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          style={{ padding: '6px 14px', fontSize: '0.85rem', background: '#16a34a' }}
-                          onClick={() => setCompletingOrder(ord)}
-                        >
-                          Accept Delivery &amp; Leave Review
-                        </button>
+                activeOrdersList.map((ord) => {
+                  const rawStatus = (ord.status || 'PENDING').toUpperCase();
+                  const isDelivered = rawStatus === 'DELIVERED';
+                  const isInProgress = rawStatus === 'IN_PROGRESS';
+                  return (
+                    <div key={ord.id} className="progress-card">
+                      <div className="progress-header">
+                        <span>
+                          <Link to={`/orders/${ord.id}`} style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 700 }}>
+                            Order #{ord.id}:
+                          </Link>{' '}
+                          <strong>{ord.service?.title || `Service #${ord.service_id}`}</strong>
+                        </span>
+                        <span>
+                          Price: <strong>${ord.amount || ord.price || 0}</strong> • Status:{' '}
+                          <strong style={{ textTransform: 'capitalize' }}>
+                            {rawStatus.replace('_', ' ')}
+                          </strong>
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))
+                      <div className="progress-bar-bg">
+                        <div
+                          className="progress-bar-fill"
+                          style={{
+                            width: isDelivered ? '100%' : isInProgress ? '65%' : '30%',
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                        <Link
+                          to={`/orders/${ord.id}`}
+                          className="btn-secondary"
+                          style={{ padding: '5px 12px', fontSize: '0.8rem', textDecoration: 'none' }}
+                        >
+                          View Details
+                        </Link>
+                        {isDelivered && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-primary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem', background: '#16a34a' }}
+                              onClick={() => setCompletingOrder(ord)}
+                            >
+                              Accept Delivery &amp; Leave Review
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ padding: '5px 12px', fontSize: '0.8rem' }}
+                              onClick={() => setRevisionOrder(ord)}
+                            >
+                              Request Revision
+                            </button>
+                          </>
+                        )}
+                        {['PENDING', 'CONFIRMED', 'IN_PROGRESS'].includes(rawStatus) && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ padding: '5px 12px', fontSize: '0.8rem', color: '#dc2626' }}
+                            onClick={() => handleCancelOrder(ord.id)}
+                          >
+                            Cancel Order
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
-                <>
-                  <div className="progress-card">
-                    <div className="progress-header">
-                      <span>Service: <strong>Video Editing</strong></span>
-                      <span>Price: <strong>$80</strong> (Progress: 60%)</span>
-                    </div>
-                    <div className="progress-bar-bg">
-                      <div className="progress-bar-fill" style={{ width: '60%' }}></div>
-                    </div>
-                  </div>
-                  <div className="progress-card" style={{ marginBottom: 0 }}>
-                    <div className="progress-header">
-                      <span>Service: <strong>Website Development</strong></span>
-                      <span>Price: <strong>$250</strong> (Progress: 25%)</span>
-                    </div>
-                    <div className="progress-bar-bg">
-                      <div className="progress-bar-fill" style={{ width: '25%' }}></div>
-                    </div>
-                  </div>
-                </>
+                <div style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>
+                  No active orders right now.{' '}
+                  <Link to="/explore" style={{ color: '#6366f1', fontWeight: 600 }}>
+                    Explore Services
+                  </Link>{' '}
+                  to hire freelance talent.
+                </div>
               )}
             </div>
 
@@ -332,33 +413,16 @@ export default function BuyerDashboardPage({ onNotice }) {
                           <h3 className="service-card-title">{s.title}</h3>
                           <div className="service-card-footer">
                             <span className="price-label">Starting at</span>
-                            <span className="price-amount">${s.packages?.[0]?.price || s.price || 50}</span>
+                            <span className="price-amount">${s.packages?.[0]?.price || s.price || 0}</span>
                           </div>
                         </div>
                       </div>
                     );
                   })
                 ) : (
-                  <>
-                    <div className="service-card" onClick={() => navigate('/explore')}>
-                      <div className="service-card-body">
-                        <h3 className="service-card-title">I will create a cinematic 4K video for you</h3>
-                        <div className="service-card-footer">
-                          <span className="price-label">Starting at</span>
-                          <span className="price-amount">$60</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="service-card" onClick={() => navigate('/explore')}>
-                      <div className="service-card-body">
-                        <h3 className="service-card-title">I will build responsive web applications in React</h3>
-                        <div className="service-card-footer">
-                          <span className="price-label">Starting at</span>
-                          <span className="price-amount">$150</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
+                  <div style={{ textAlign: 'center', padding: '24px', color: '#64748b', gridColumn: '1 / -1' }}>
+                    No saved services yet. Click the heart icon on any service listing to save it.
+                  </div>
                 )}
               </div>
             </div>
@@ -370,51 +434,84 @@ export default function BuyerDashboardPage({ onNotice }) {
           <div className="content-block">
             <h2 className="block-title">Ongoing Deliveries</h2>
             {activeOrdersList.length > 0 ? (
-              activeOrdersList.map((ord) => (
-                <div key={ord.id} className="progress-card">
-                  <div className="progress-header">
-                    <div>
-                      <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>
-                        Order #{ord.id}: {ord.service?.title || ord.service_title || 'Independent Service'}
+              activeOrdersList.map((ord) => {
+                const rawStatus = (ord.status || 'PENDING').toUpperCase();
+                const isDelivered = rawStatus === 'DELIVERED';
+                const isInProgress = rawStatus === 'IN_PROGRESS';
+                return (
+                  <div key={ord.id} className="progress-card">
+                    <div className="progress-header">
+                      <div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>
+                          <Link to={`/orders/${ord.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                            Order #{ord.id}: {ord.service?.title || `Service #${ord.service_id}`}
+                          </Link>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '4px' }}>
+                          Seller: {ord.seller?.name || ord.seller?.username || `Seller #${ord.seller_id}`} • Price: ${ord.amount || ord.price}
+                        </div>
                       </div>
-                      <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '4px' }}>
-                        Seller: {ord.seller?.name || ord.seller?.username || 'DUMMR Seller'} • Price: ${ord.price}
+                      <span className={`badge-status badge-${rawStatus.toLowerCase().replace('_', '-')}`}>
+                        {rawStatus.replace('_', ' ')}
+                      </span>
+                    </div>
+
+                    {ord.delivery_message && (
+                      <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', margin: '12px 0', fontSize: '0.85rem' }}>
+                        <strong>Seller Note:</strong> {ord.delivery_message}
                       </div>
-                    </div>
-                    <span className={`badge-status badge-${ord.status?.replace('_', '-')}`}>
-                      {ord.status?.replace('_', ' ').toUpperCase()}
-                    </span>
-                  </div>
+                    )}
 
-                  {ord.delivery_message && (
-                    <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', margin: '12px 0', fontSize: '0.85rem' }}>
-                      <strong>Seller Note:</strong> {ord.delivery_message}
-                    </div>
-                  )}
-
-                  {ord.status === 'delivered' ? (
-                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        style={{ background: '#16a34a' }}
-                        onClick={() => setCompletingOrder(ord)}
-                      >
-                        Accept Delivery &amp; Leave Review
-                      </button>
-                    </div>
-                  ) : (
                     <div className="progress-bar-bg" style={{ marginTop: '14px' }}>
                       <div
                         className="progress-bar-fill"
                         style={{
-                          width: ord.status === 'in_progress' ? '60%' : '20%',
+                          width: isDelivered ? '100%' : isInProgress ? '60%' : '20%',
                         }}
                       />
                     </div>
-                  )}
-                </div>
-              ))
+
+                    <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                      <Link
+                        to={`/orders/${ord.id}`}
+                        className="btn-secondary"
+                        style={{ textDecoration: 'none' }}
+                      >
+                        Order Details
+                      </Link>
+                      {isDelivered && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ background: '#16a34a' }}
+                            onClick={() => setCompletingOrder(ord)}
+                          >
+                            Accept Delivery &amp; Leave Review
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setRevisionOrder(ord)}
+                          >
+                            Request Revision
+                          </button>
+                        </>
+                      )}
+                      {['PENDING', 'CONFIRMED', 'IN_PROGRESS'].includes(rawStatus) && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ color: '#dc2626' }}
+                          onClick={() => handleCancelOrder(ord.id)}
+                        >
+                          Cancel Order
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
               <div style={{ textAlign: 'center', padding: '40px', background: '#f8fafc', borderRadius: '12px' }}>
                 <h3>No active orders</h3>
@@ -447,99 +544,116 @@ export default function BuyerDashboardPage({ onNotice }) {
                   className={`inbox-thread-item ${activeThreadIndex === i ? 'active' : ''}`}
                   onClick={() => setActiveThreadIndex(i)}
                 >
-                  <div
-                    className="inbox-avatar"
-                    style={{ background: t.color || '#7c3aed' }}
-                  >
-                    {t.initials || (t.name || 'DS').substring(0, 2).toUpperCase()}
+                  <div className="inbox-avatar" style={{ background: '#7c3aed' }}>
+                    {(t.name || `S${t.id}`).substring(0, 2).toUpperCase()}
                   </div>
                   <div className="inbox-thread-meta">
                     <div className="inbox-thread-top">
-                      <span className="inbox-thread-name">{t.name}</span>
-                      <span className="inbox-thread-time">{t.time || 'Today'}</span>
+                      <span className="inbox-thread-name">{t.name || `Seller #${t.seller_id || t.id}`}</span>
+                      <span className="inbox-thread-time">
+                        {t.updated_at ? new Date(t.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today'}
+                      </span>
                     </div>
-                    <div className="inbox-thread-service">{t.service || 'Marketplace Service'}</div>
-                    <div className="inbox-thread-preview">{t.preview}</div>
+                    <div className="inbox-thread-service">{t.order_id ? `Order #${t.order_id}` : 'Direct Conversation'}</div>
+                    <div className="inbox-thread-preview">{t.last_message || 'Open conversation'}</div>
                   </div>
-                  {t.unread > 0 && (
-                    <span className="inbox-unread-badge">{t.unread}</span>
-                  )}
+                  {t.unread_count > 0 && <span className="inbox-unread-badge">{t.unread_count}</span>}
                 </button>
               ))}
+              {conversations.length === 0 && (
+                <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                  No messages yet. When you contact sellers or place orders, chats will appear here.
+                </div>
+              )}
             </div>
 
             <div className="inbox-chat">
-              <div className="inbox-chat-header">
-                <div
-                  className="inbox-avatar"
-                  style={{
-                    background: conversations[activeThreadIndex]?.color || '#7c3aed',
-                    width: '38px',
-                    height: '38px',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  {conversations[activeThreadIndex]?.initials || 'DS'}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{conversations[activeThreadIndex]?.name || 'Seller'}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {conversations[activeThreadIndex]?.service || 'Direct Chat'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="inbox-messages">
-                {messages.map((msg, i) => {
-                  const isMine = msg.from === 'me' || msg.sender_id === currentUser?.id;
-                  return (
-                    <div
-                      key={i}
-                      className={`inbox-bubble-row ${isMine ? 'mine' : 'theirs'}`}
-                    >
-                      {!isMine && (
-                        <div
-                          className="inbox-avatar"
-                          style={{
-                            background: conversations[activeThreadIndex]?.color || '#7c3aed',
-                            width: '30px',
-                            height: '30px',
-                            fontSize: '0.7rem',
-                            flexShrink: 0,
-                            alignSelf: 'flex-end',
-                          }}
-                        >
-                          {conversations[activeThreadIndex]?.initials || 'DS'}
+              {conversations.length > 0 ? (
+                <>
+                  <div className="inbox-chat-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div className="inbox-avatar" style={{ background: '#7c3aed', width: '38px', height: '38px', fontSize: '0.85rem' }}>
+                        {(conversations[activeThreadIndex]?.name || 'DS').substring(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>
+                          {conversations[activeThreadIndex]?.name || `Seller #${conversations[activeThreadIndex]?.seller_id || ''}`}
                         </div>
-                      )}
-                      <div className="inbox-bubble-wrap">
-                        <div className={`inbox-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}>
-                          {msg.text || msg.content}
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {conversations[activeThreadIndex]?.order_id ? `Order #${conversations[activeThreadIndex].order_id}` : 'Direct Chat'}
                         </div>
-                        <span className="inbox-bubble-ts">{msg.ts || 'Today'}</span>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              <form className="inbox-composer" onSubmit={handleSendMessage}>
-                <input
-                  type="text"
-                  className="inbox-input"
-                  placeholder="Type a message…"
-                  value={msgInput}
-                  onChange={(e) => setMsgInput(e.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  style={{ padding: '10px 20px', borderRadius: '12px' }}
-                  disabled={isSendingMsg}
-                >
-                  Send
-                </button>
-              </form>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+                        onClick={() => {
+                          const otherId = conversations[activeThreadIndex]?.buyer_id === currentUser?.id ? conversations[activeThreadIndex]?.seller_id : conversations[activeThreadIndex]?.buyer_id;
+                          setReportTarget(otherId);
+                        }}
+                      >
+                        🚩 Report
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', color: '#dc2626' }}
+                        onClick={handleBlockUserInChat}
+                      >
+                        🚫 Block
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="inbox-messages">
+                    {messages.map((msg, i) => {
+                      const isMine = msg.from === 'me' || msg.sender_id === currentUser?.id;
+                      return (
+                        <div key={i} className={`inbox-bubble-row ${isMine ? 'mine' : 'theirs'}`}>
+                          <div className="inbox-bubble-wrap">
+                            <div className={`inbox-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}>
+                              {msg.content || msg.text}
+                            </div>
+                            <span className="inbox-bubble-ts">
+                              {msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (msg.ts || 'Now')}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {messages.length === 0 && (
+                      <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+                        Start of your conversation. Send a message below!
+                      </div>
+                    )}
+                  </div>
+
+                  <form className="inbox-composer" onSubmit={handleSendMessage}>
+                    <input
+                      type="text"
+                      className="inbox-input"
+                      placeholder="Type a message…"
+                      value={msgInput}
+                      onChange={(e) => setMsgInput(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      style={{ padding: '10px 20px', borderRadius: '12px' }}
+                      disabled={isSendingMsg}
+                    >
+                      Send
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                  Select or start a conversation to view messages.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -562,7 +676,7 @@ export default function BuyerDashboardPage({ onNotice }) {
                         <h3 className="service-card-title">{s.title}</h3>
                         <div className="service-card-footer">
                           <span className="price-label">Starting at</span>
-                          <span className="price-amount">${s.packages?.[0]?.price || s.price || 50}</span>
+                          <span className="price-amount">${s.packages?.[0]?.price || s.price || 0}</span>
                         </div>
                       </div>
                     </div>
@@ -586,7 +700,7 @@ export default function BuyerDashboardPage({ onNotice }) {
         {/* ── TAB: ORDER HISTORY ──────────────────────────────────── */}
         {activeTab === 'Order History' && (
           <div className="table-container">
-            <div className="table-header">Completed &amp; Past Orders</div>
+            <div className="table-header">Completed &amp; Past Orders ({completedOrdersList.length})</div>
             <table className="data-table">
               <thead>
                 <tr>
@@ -595,40 +709,41 @@ export default function BuyerDashboardPage({ onNotice }) {
                   <th>Seller</th>
                   <th>Amount</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {completedOrdersList.length > 0 ? (
-                  completedOrdersList.map((ord) => (
+                {completedOrdersList.map((ord) => {
+                  const rawStatus = (ord.status || 'COMPLETED').toUpperCase();
+                  return (
                     <tr key={ord.id}>
-                      <td>#{ord.id}</td>
-                      <td>{ord.service?.title || ord.service_title || 'Marketplace Service'}</td>
-                      <td>{ord.seller?.name || ord.seller?.username || 'DUMMR Seller'}</td>
-                      <td>${ord.price}</td>
+                      <td style={{ fontWeight: 600 }}>
+                        <Link to={`/orders/${ord.id}`} style={{ color: '#6366f1', textDecoration: 'none' }}>
+                          #{ord.id}
+                        </Link>
+                      </td>
+                      <td>{ord.service?.title || `Service #${ord.service_id}`}</td>
+                      <td>{ord.seller?.name || ord.seller?.username || `Seller #${ord.seller_id}`}</td>
+                      <td>${ord.amount || ord.price || 0}</td>
                       <td>
-                        <span className={`badge-status badge-${ord.status?.replace('_', '-')}`}>
-                          {ord.status?.replace('_', ' ').toUpperCase()}
+                        <span className={`badge-status badge-${rawStatus.toLowerCase().replace('_', '-')}`}>
+                          {rawStatus.replace('_', ' ')}
                         </span>
                       </td>
+                      <td>
+                        <Link to={`/orders/${ord.id}`} className="btn-secondary" style={{ padding: '3px 8px', fontSize: '0.75rem', textDecoration: 'none' }}>
+                          View
+                        </Link>
+                      </td>
                     </tr>
-                  ))
-                ) : (
-                  <>
-                    <tr>
-                      <td>#ORD-7812</td>
-                      <td>Logo Design</td>
-                      <td>Priya Design</td>
-                      <td>$40</td>
-                      <td><span className="badge-status badge-delivered">Completed</span></td>
-                    </tr>
-                    <tr>
-                      <td>#ORD-6541</td>
-                      <td>SEO Consultation</td>
-                      <td>Mark Words</td>
-                      <td>$35</td>
-                      <td><span className="badge-status badge-delivered">Completed</span></td>
-                    </tr>
-                  </>
+                  );
+                })}
+                {completedOrdersList.length === 0 && (
+                  <tr>
+                    <td colSpan="6" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                      No past orders completed yet.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -648,7 +763,7 @@ export default function BuyerDashboardPage({ onNotice }) {
               </div>
               <div className="stat-card">
                 <div className="stat-label">Escrow Protected Orders</div>
-                <div className="stat-value">{activeOrdersList.length || 2}</div>
+                <div className="stat-value">{activeOrdersList.length}</div>
               </div>
               <div className="stat-card">
                 <div className="stat-label">Refunds Processed</div>
@@ -706,44 +821,37 @@ export default function BuyerDashboardPage({ onNotice }) {
             }}
           >
             <h3 style={{ fontSize: '1.3rem', marginBottom: '8px' }}>
-              Complete Order &amp; Leave Review
+              Accept Delivery &amp; Leave Review
             </h3>
-            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '20px' }}>
-              Approving delivery releases funds to the provider. Share your honest feedback.
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+              Finalize Order #{completingOrder.id} and share your feedback with the seller.
             </p>
             <form onSubmit={handleCompleteAndReview}>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
-                  Star Rating (1 - 5)
+                  Rating
                 </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      style={{
-                        fontSize: '1.6rem',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: star <= rating ? '#f59e0b' : '#cbd5e1',
-                      }}
-                      onClick={() => setRating(star)}
-                    >
-                      ★
-                    </button>
-                  ))}
-                </div>
+                <select
+                  className="form-input"
+                  value={rating}
+                  onChange={(e) => setRating(e.target.value)}
+                >
+                  <option value="5">★★★★★ (5 - Excellent)</option>
+                  <option value="4">★★★★☆ (4 - Good)</option>
+                  <option value="3">★★★☆☆ (3 - Average)</option>
+                  <option value="2">★★☆☆☆ (2 - Poor)</option>
+                  <option value="1">★☆☆☆☆ (1 - Terrible)</option>
+                </select>
               </div>
 
-              <div style={{ marginBottom: '20px' }}>
+              <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>
-                  Review Feedback
+                  Review Comments
                 </label>
                 <textarea
-                  rows="4"
+                  rows="3"
                   className="form-textarea"
-                  placeholder="How was the communication, delivery speed, and quality of work?"
+                  placeholder="Share details about the deliverable, communication, and speed..."
                   value={reviewComment}
                   onChange={(e) => setReviewComment(e.target.value)}
                   required
@@ -764,7 +872,128 @@ export default function BuyerDashboardPage({ onNotice }) {
                   className="btn-primary"
                   disabled={isSubmittingReview}
                 >
-                  {isSubmittingReview ? 'Submitting Review...' : 'Approve & Release Funds'}
+                  {isSubmittingReview ? 'Submitting...' : 'Complete &amp; Submit Review'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Revision Modal */}
+      {revisionOrder && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              maxWidth: '480px',
+              width: '100%',
+              padding: '28px',
+            }}
+          >
+            <h3 style={{ fontSize: '1.3rem', marginBottom: '8px' }}>
+              Request Revision for Order #{revisionOrder.id}
+            </h3>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+              Specify the changes needed before approving the final delivery.
+            </p>
+            <form onSubmit={handleRequestRevision}>
+              <div style={{ marginBottom: '16px' }}>
+                <textarea
+                  rows="4"
+                  className="form-textarea"
+                  placeholder="Please specify exactly what needs modification..."
+                  value={revisionNote}
+                  onChange={(e) => setRevisionNote(e.target.value)}
+                  required
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={isSubmittingRevision}
+                  onClick={() => setRevisionOrder(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={isSubmittingRevision}
+                >
+                  {isSubmittingRevision ? 'Submitting...' : 'Submit Revision Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {reportTarget && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '24px',
+            }}
+          >
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '8px' }}>Report User</h3>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+              Describe the issue or policy violation (e.g. spam, harassment, fraudulent activity).
+            </p>
+            <form onSubmit={handleReportUserInChat}>
+              <textarea
+                rows="4"
+                className="form-textarea"
+                placeholder="Reason for report..."
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                required
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setReportTarget(null)}
+                  disabled={isReporting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ background: '#dc2626' }}
+                  disabled={isReporting}
+                >
+                  {isReporting ? 'Submitting...' : 'Submit Report'}
                 </button>
               </div>
             </form>

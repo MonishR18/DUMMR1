@@ -96,17 +96,26 @@ def create_service(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["PROVIDER", "ADMIN"]))
 ):
+    import re
+    import uuid
+
     if not current_user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email verification required")
 
     category = db.query(Category).filter(Category.id == service.category_id).first()
     if not category:
         raise HTTPException(status_code=400, detail="Category does not exist")
-        
-    if db.query(Service).filter(Service.slug == service.slug).first():
-        raise HTTPException(status_code=400, detail="Slug already exists")
-        
-    db_service = Service(**service.model_dump(), seller_id=current_user.id)
+
+    slug_val = service.slug
+    if not slug_val:
+        base_slug = re.sub(r'[^a-z0-9]+', '-', service.title.lower()).strip('-') or 'service'
+        slug_val = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+    elif db.query(Service).filter(Service.slug == slug_val).first():
+        slug_val = f"{slug_val}-{uuid.uuid4().hex[:6]}"
+
+    service_data = service.model_dump()
+    service_data["slug"] = slug_val
+    db_service = Service(**service_data, seller_id=current_user.id)
     db.add(db_service)
     db.commit()
     db.refresh(db_service)
@@ -224,7 +233,19 @@ def create_service_package(service_id: int, package: ServicePackageCreate, db: S
     if service.seller_id != current_user.id and current_user.role != "ADMIN":
         raise HTTPException(status_code=403, detail="Not authorized")
         
-    db_package = ServicePackage(**package.model_dump(), service_id=service_id)
+    pkg_name = package.get_normalized_name() if hasattr(package, "get_normalized_name") else (package.name or "Standard")
+    features_val = package.get_features_str() if hasattr(package, "get_features_str") else (
+        str(package.features) if package.features is not None else None
+    )
+    db_package = ServicePackage(
+        service_id=service_id,
+        name=pkg_name,
+        description=package.description,
+        price=package.price,
+        delivery_days=package.delivery_days,
+        revisions=package.revisions,
+        features=features_val,
+    )
     db.add(db_package)
     db.commit()
     db.refresh(db_package)

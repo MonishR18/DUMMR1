@@ -126,7 +126,7 @@ export async function registerUser({ name, fullName, username, email, password, 
       username,
       email,
       password,
-      role: role.toUpperCase(),
+      role: (role || 'CLIENT').toUpperCase(),
       specialty,
       college,
     }),
@@ -156,6 +156,12 @@ export async function logoutUser() {
   } finally {
     clearSession();
   }
+}
+
+export async function verifyEmail(token) {
+  return apiRequest(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, {
+    method: 'GET',
+  });
 }
 
 export async function forgotPassword(email) {
@@ -238,6 +244,21 @@ export async function createServicePackage(serviceId, packageData) {
   });
 }
 
+export async function fetchServicePackages(serviceId) {
+  return apiRequest(`/api/services/${serviceId}/packages`, { method: 'GET' });
+}
+
+export async function addServiceMedia(serviceId, mediaData) {
+  return apiRequest(`/api/services/${serviceId}/media`, {
+    method: 'POST',
+    body: JSON.stringify(mediaData),
+  });
+}
+
+export async function fetchServiceMedia(serviceId) {
+  return apiRequest(`/api/services/${serviceId}/media`, { method: 'GET' });
+}
+
 /* ================= SAVED SERVICES ================= */
 
 export async function toggleSaveService(serviceId) {
@@ -280,6 +301,13 @@ export async function deliverOrder(id, { message = '', files = [] } = {}) {
   });
 }
 
+export async function requestRevision(id, { message = '' } = {}) {
+  return apiRequest(`/api/orders/${id}/revision`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+}
+
 export async function completeOrder(id) {
   return apiRequest(`/api/orders/${id}/complete`, { method: 'POST' });
 }
@@ -292,6 +320,35 @@ export async function createReview(orderId, { rating, comment = '' }) {
   return apiRequest(`/api/orders/${orderId}/review`, {
     method: 'POST',
     body: JSON.stringify({ rating, comment }),
+  });
+}
+
+/* ================= STORAGE & FILE UPLOADS ================= */
+
+export async function uploadFile(file, folder = 'media') {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest(`/api/storage/upload?folder=${folder}`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function uploadServiceMedia(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest('/api/storage/upload/service', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function uploadDeliveryFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiRequest('/api/storage/upload/delivery', {
+    method: 'POST',
+    body: formData,
   });
 }
 
@@ -333,6 +390,14 @@ export async function fetchSellerServices() {
   return apiRequest('/api/seller/services', { method: 'GET' });
 }
 
+export async function fetchSellerOrders() {
+  return apiRequest('/api/seller/orders', { method: 'GET' });
+}
+
+export async function fetchSellerAnalytics() {
+  return apiRequest('/api/seller/analytics', { method: 'GET' });
+}
+
 export async function fetchBuyerDashboard() {
   return apiRequest('/api/buyer/dashboard', { method: 'GET' });
 }
@@ -349,4 +414,71 @@ export async function markNotificationRead(id) {
 
 export async function markAllNotificationsRead() {
   return apiRequest('/api/notifications/read-all', { method: 'POST' });
+}
+
+/* ================= REPORTS & BLOCKS ================= */
+
+export async function createReport({ target_type, target_id, reason }) {
+  return apiRequest('/api/reports', {
+    method: 'POST',
+    body: JSON.stringify({ target_type, target_id, reason }),
+  });
+}
+
+export async function fetchBlockedUsers() {
+  return apiRequest('/api/blocks', { method: 'GET' });
+}
+
+export async function blockUser(userId) {
+  return apiRequest(`/api/blocks/${userId}`, { method: 'POST' });
+}
+
+export async function unblockUser(userId) {
+  return apiRequest(`/api/blocks/${userId}`, { method: 'DELETE' });
+}
+
+/* ================= ADMIN ================= */
+
+export async function fetchAdminDashboard() {
+  return apiRequest('/api/admin/dashboard', { method: 'GET' });
+}
+
+export async function fetchAdminUsers(skip = 0, limit = 50) {
+  return apiRequest(`/api/admin/users?skip=${skip}&limit=${limit}`, { method: 'GET' });
+}
+
+export async function fetchAdminServices(skip = 0, limit = 50) {
+  return apiRequest(`/api/admin/services?skip=${skip}&limit=${limit}`, { method: 'GET' });
+}
+
+export async function fetchAdminOrders(skip = 0, limit = 50) {
+  return apiRequest(`/api/admin/orders?skip=${skip}&limit=${limit}`, { method: 'GET' });
+}
+
+export async function fetchAdminReports(status = '', skip = 0, limit = 50) {
+  const q = status ? `&status=${status}` : '';
+  return apiRequest(`/api/admin/reports?skip=${skip}&limit=${limit}${q}`, { method: 'GET' });
+}
+
+export async function deactivateUserAdmin(userId) {
+  return apiRequest(`/api/admin/users/${userId}/deactivate`, { method: 'POST' });
+}
+
+export async function reactivateUserAdmin(userId) {
+  return apiRequest(`/api/admin/users/${userId}/reactivate`, { method: 'POST' });
+}
+
+export async function unpublishServiceAdmin(serviceId) {
+  return apiRequest(`/api/admin/services/${serviceId}/unpublish`, { method: 'POST' });
+}
+
+export async function deleteServiceAdmin(serviceId) {
+  return apiRequest(`/api/admin/services/${serviceId}`, { method: 'DELETE' });
+}
+
+export async function resolveReportAdmin(reportId, status = 'RESOLVED') {
+  return apiRequest(`/api/admin/reports/${reportId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  });
 }

@@ -44,15 +44,29 @@ class ServiceMediaResponse(ServiceMediaBase):
     model_config = ConfigDict(from_attributes=True)
 
 class ServicePackageBase(BaseModel):
-    name: str
+    name: str = "Standard"
+    tier: Optional[str] = None
     description: Optional[str] = None
     price: float = Field(ge=0.0)
     delivery_days: int = Field(gt=0)
     revisions: int = Field(ge=0, default=0)
-    features: Optional[str] = None # JSON string or plain text
+    features: Optional[Any] = None # JSON string, plain text, or list
+
+    def get_normalized_name(self) -> str:
+        if self.name and self.name != "Standard":
+            return self.name
+        if self.tier:
+            return self.tier.capitalize()
+        return self.name or "Standard"
+
+    def get_features_str(self) -> Optional[str]:
+        if isinstance(self.features, list):
+            import json
+            return json.dumps(self.features)
+        return str(self.features) if self.features is not None else None
 
 class ServicePackageCreate(ServicePackageBase):
-    pass
+    name: Optional[str] = "Standard"
 
 class ServicePackageUpdate(BaseModel):
     name: Optional[str] = None
@@ -60,11 +74,17 @@ class ServicePackageUpdate(BaseModel):
     price: Optional[float] = Field(ge=0.0, default=None)
     delivery_days: Optional[int] = Field(gt=0, default=None)
     revisions: Optional[int] = Field(ge=0, default=None)
-    features: Optional[str] = None
+    features: Optional[Any] = None
 
-class ServicePackageResponse(ServicePackageBase):
+class ServicePackageResponse(BaseModel):
     id: int
     service_id: int
+    name: str
+    description: Optional[str] = None
+    price: float
+    delivery_days: int
+    revisions: int = 0
+    features: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     
@@ -72,7 +92,7 @@ class ServicePackageResponse(ServicePackageBase):
 
 class ServiceBase(BaseModel):
     title: str
-    slug: str
+    slug: Optional[str] = None
     description: str
     category_id: int
 

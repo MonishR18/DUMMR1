@@ -84,8 +84,10 @@ export function AuthProvider({ children }) {
     setCurrentUser(null);
   };
 
-  const isProvider = currentUser?.role === 'provider';
-  const isClient = currentUser?.role === 'client';
+  const roleNorm = (currentUser?.role || '').toLowerCase();
+  const isProvider = roleNorm === 'provider';
+  const isClient = roleNorm === 'client';
+  const isAdmin = roleNorm === 'admin';
 
   return (
     <AuthContext.Provider
@@ -94,6 +96,7 @@ export function AuthProvider({ children }) {
         isLoading,
         isProvider,
         isClient,
+        isAdmin,
         login,
         register,
         logout,

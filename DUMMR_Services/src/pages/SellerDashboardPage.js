@@ -1,21 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import {
   fetchSellerDashboard,
   fetchSellerServices,
+  fetchSellerOrders,
+  fetchSellerAnalytics,
   acceptOrder,
   startOrder,
   deliverOrder,
+  cancelOrder,
   publishService,
   pauseService,
+  deleteService,
   fetchConversations,
   fetchMessages,
   sendMessage,
+  markConversationRead,
+  blockUser,
+  createReport,
 } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 export default function SellerDashboardPage({ onNotice }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { currentUser } = useAuth();
 
   const activeTab = searchParams.get('tab') || 'Dashboard';
@@ -25,21 +33,31 @@ export default function SellerDashboardPage({ onNotice }) {
     setSearchParams(newParams);
   };
 
-  // Dashboard Data State
+  // Dashboard Data State - Clean 0 initialization
   const [dashboardData, setDashboardData] = useState({
-    revenue: 2450,
-    orders_count: 38,
-    active_orders: 3,
-    rating: 4.9,
-    views: '12.4K',
+    revenue: 0,
+    orders: 0,
+    orders_count: 0,
+    active_orders: 0,
+    completed_orders: 0,
+    pending_orders: 0,
+    rating: 0,
+    views: 0,
     recent_orders: [],
   });
   const [myServices, setMyServices] = useState([]);
+  const [allOrders, setAllOrders] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
 
   // Deliver Modal State
   const [deliverModalOrder, setDeliverModalOrder] = useState(null);
   const [deliveryMessage, setDeliveryMessage] = useState('');
   const [isDelivering, setIsDelivering] = useState(false);
+
+  // Report Modal State
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState('');
+  const [isReporting, setIsReporting] = useState(false);
 
   // Messaging State
   const [conversations, setConversations] = useState([]);
@@ -48,33 +66,44 @@ export default function SellerDashboardPage({ onNotice }) {
   const [msgInput, setMsgInput] = useState('');
   const [isSendingMsg, setIsSendingMsg] = useState(false);
 
-  // Load Dashboard & Services
+  // Load Dashboard, Services, Orders & Analytics
   const loadData = useCallback(async () => {
     try {
-      const [dashRes, servicesRes] = await Promise.allSettled([
+      const [dashRes, servicesRes, ordersRes, analyticsRes] = await Promise.allSettled([
         fetchSellerDashboard(),
         fetchSellerServices(),
+        fetchSellerOrders(),
+        fetchSellerAnalytics(),
       ]);
 
       if (dashRes.status === 'fulfilled' && dashRes.value) {
-        setDashboardData((prev) => ({
-          ...prev,
-          revenue: dashRes.value.revenue ?? prev.revenue,
-          orders_count: dashRes.value.orders_count ?? prev.orders_count,
-          active_orders: dashRes.value.active_orders ?? prev.active_orders,
-          rating: dashRes.value.rating ?? prev.rating,
-          views: dashRes.value.views ?? prev.views,
-          recent_orders: Array.isArray(dashRes.value.recent_orders)
-            ? dashRes.value.recent_orders
-            : [],
-        }));
+        const val = dashRes.value;
+        setDashboardData({
+          revenue: val.revenue ?? 0,
+          orders: val.orders ?? val.orders_count ?? 0,
+          orders_count: val.orders ?? val.orders_count ?? 0,
+          active_orders: val.active_orders ?? 0,
+          completed_orders: val.completed_orders ?? 0,
+          pending_orders: val.pending_orders ?? 0,
+          rating: val.rating ?? 0,
+          views: val.views ?? 0,
+          recent_orders: Array.isArray(val.recent_orders) ? val.recent_orders : [],
+        });
       }
 
       if (servicesRes.status === 'fulfilled' && Array.isArray(servicesRes.value)) {
         setMyServices(servicesRes.value);
       }
+
+      if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+        setAllOrders(ordersRes.value);
+      }
+
+      if (analyticsRes.status === 'fulfilled' && analyticsRes.value) {
+        setAnalytics(analyticsRes.value);
+      }
     } catch (err) {
-      // Fallback data remains
+      // Keep state clean
     }
   }, []);
 
@@ -89,45 +118,33 @@ export default function SellerDashboardPage({ onNotice }) {
       const loadChats = async () => {
         try {
           const convList = await fetchConversations();
-          if (isMounted && Array.isArray(convList) && convList.length > 0) {
+          if (isMounted && Array.isArray(convList)) {
             setConversations(convList);
-            const activeConv = convList[activeThreadIndex] || convList[0];
-            if (activeConv?.id) {
-              const msgList = await fetchMessages(activeConv.id);
-              if (isMounted && Array.isArray(msgList)) {
-                setMessages(msgList);
+            if (convList.length > 0) {
+              const activeConv = convList[activeThreadIndex] || convList[0];
+              if (activeConv?.id) {
+                // Call markConversationRead to clear unread counts!
+                try {
+                  await markConversationRead(activeConv.id);
+                  activeConv.unread_count = 0;
+                } catch (readErr) {
+                  // Non-fatal
+                }
+
+                const msgList = await fetchMessages(activeConv.id);
+                if (isMounted && Array.isArray(msgList)) {
+                  setMessages(msgList);
+                }
               }
+            } else {
+              setMessages([]);
             }
-          } else if (isMounted) {
-            // Demo conversations if none in backend yet
-            setConversations([
-              {
-                id: 1,
-                name: 'Rahul Sharma',
-                initials: 'RS',
-                service: 'Professional Website Design',
-                preview: 'Can we schedule a call to review the landing page header?',
-                time: '10m ago',
-                unread: 1,
-              },
-              {
-                id: 2,
-                name: 'Arjun Patel',
-                initials: 'AP',
-                service: 'Cinematic 4K Video Editing',
-                preview: 'The color grading on the first draft looks awesome!',
-                time: '2h ago',
-                unread: 0,
-              },
-            ]);
-            setMessages([
-              { from: 'them', text: 'Hi! Looking forward to working together on the design.', ts: '10:00 AM' },
-              { from: 'me', text: 'Welcome! I have received your wireframes and started layout.', ts: '10:05 AM' },
-              { from: 'them', text: 'Can we schedule a call to review the landing page header?', ts: '10:30 AM' },
-            ]);
           }
         } catch (err) {
-          // Demo fallback
+          if (isMounted) {
+            setConversations([]);
+            setMessages([]);
+          }
         }
       };
       loadChats();
@@ -178,9 +195,21 @@ export default function SellerDashboardPage({ onNotice }) {
     }
   };
 
-  const handleToggleServiceStatus = async (service) => {
+  const handleCancelOrder = async (orderId) => {
+    if (!window.confirm(`Are you sure you want to cancel order #${orderId}?`)) return;
     try {
-      if (service.status === 'published') {
+      await cancelOrder(orderId);
+      if (onNotice) onNotice(`Order #${orderId} cancelled.`);
+      loadData();
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to cancel order.');
+    }
+  };
+
+  const handleToggleServiceStatus = async (service) => {
+    const isCurrentlyPublished = service.status?.toUpperCase() === 'PUBLISHED';
+    try {
+      if (isCurrentlyPublished) {
         await pauseService(service.id);
         if (onNotice) onNotice(`Service "${service.title}" paused.`);
       } else {
@@ -193,6 +222,17 @@ export default function SellerDashboardPage({ onNotice }) {
     }
   };
 
+  const handleDeleteService = async (serviceId) => {
+    if (!window.confirm(`Are you sure you want to delete service #${serviceId}?`)) return;
+    try {
+      await deleteService(serviceId);
+      if (onNotice) onNotice('Service deleted.');
+      loadData();
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to delete service.');
+    }
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!msgInput.trim()) return;
@@ -201,33 +241,55 @@ export default function SellerDashboardPage({ onNotice }) {
     setIsSendingMsg(true);
 
     const activeConv = conversations[activeThreadIndex];
-    if (activeConv?.id && typeof activeConv.id === 'number') {
+    if (activeConv?.id) {
       try {
         await sendMessage(activeConv.id, text);
         const updated = await fetchMessages(activeConv.id);
         setMessages(updated);
       } catch (err) {
-        // Optimistic append
-        setMessages((prev) => [...prev, { from: 'me', text, ts: 'Just now' }]);
+        setMessages((prev) => [...prev, { sender_id: currentUser?.id, content: text, created_at: new Date().toISOString() }]);
       }
-    } else {
-      setMessages((prev) => [...prev, { from: 'me', text, ts: 'Just now' }]);
     }
     setIsSendingMsg(false);
   };
 
-  const renderActiveOrders = () => {
-    const orders = dashboardData.recent_orders.length > 0
-      ? dashboardData.recent_orders
-      : [
-          { id: 101, buyer_name: 'Rahul', service_title: 'Website Design', price: 120, status: 'in_progress' },
-          { id: 102, buyer_name: 'Arjun', service_title: 'Video Editing', price: 80, status: 'delivered' },
-          { id: 103, buyer_name: 'Priya', service_title: 'Logo Design', price: 40, status: 'pending' },
-        ];
+  const handleBlockUserInChat = async () => {
+    const activeConv = conversations[activeThreadIndex];
+    const otherUserId = activeConv?.buyer_id === currentUser?.id ? activeConv?.seller_id : activeConv?.buyer_id;
+    if (!otherUserId) return;
+    if (!window.confirm('Block this user? You will no longer receive messages or orders from them.')) return;
+    try {
+      await blockUser(otherUserId);
+      if (onNotice) onNotice('User blocked.');
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to block user.');
+    }
+  };
 
+  const handleReportUserInChat = async (e) => {
+    e.preventDefault();
+    if (!reportTarget || !reportReason.trim()) return;
+    setIsReporting(true);
+    try {
+      await createReport({
+        target_type: 'USER',
+        target_id: reportTarget,
+        reason: reportReason.trim(),
+      });
+      if (onNotice) onNotice('Report submitted to moderators.');
+      setReportTarget(null);
+      setReportReason('');
+    } catch (err) {
+      if (onNotice) onNotice(err.message || 'Failed to submit report.');
+    } finally {
+      setIsReporting(false);
+    }
+  };
+
+  const renderOrdersTable = (ordersList, title) => {
     return (
       <div className="table-container">
-        <div className="table-header">Active Orders</div>
+        <div className="table-header">{title} ({ordersList.length})</div>
         <table className="data-table">
           <thead>
             <tr>
@@ -240,46 +302,71 @@ export default function SellerDashboardPage({ onNotice }) {
             </tr>
           </thead>
           <tbody>
-            {orders.map((ord) => {
-              const status = ord.status || 'pending';
+            {ordersList.map((ord) => {
+              const rawStatus = (ord.status || 'PENDING').toUpperCase();
               return (
                 <tr key={ord.id}>
-                  <td style={{ fontWeight: 600 }}>#{ord.id}</td>
-                  <td>{ord.buyer?.name || ord.buyer_name || 'Client'}</td>
-                  <td>{ord.service?.title || ord.service_title || 'Marketplace Service'}</td>
-                  <td style={{ fontWeight: 700 }}>${ord.price || 50}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    <Link to={`/orders/${ord.id}`} style={{ color: '#6366f1', textDecoration: 'none' }}>
+                      #{ord.id}
+                    </Link>
+                  </td>
+                  <td>{ord.buyer?.name || ord.buyer?.username || `Client #${ord.buyer_id || ''}`}</td>
                   <td>
-                    <span className={`badge-status badge-${status.replace('_', '-')}`}>
-                      {status.replace('_', ' ').toUpperCase()}
+                    <Link to={`/orders/${ord.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {ord.service?.title || `Service #${ord.service_id || ''}`}
+                    </Link>
+                  </td>
+                  <td style={{ fontWeight: 700 }}>${ord.amount || ord.price || 0}</td>
+                  <td>
+                    <span className={`badge-status badge-${rawStatus.toLowerCase().replace('_', '-')}`}>
+                      {rawStatus.replace('_', ' ')}
                     </span>
                   </td>
                   <td>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      {status === 'pending' && (
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          style={{ padding: '4px 10px', fontSize: '0.75rem' }}
-                          onClick={() => handleAcceptOrder(ord.id)}
-                        >
-                          Accept
-                        </button>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <Link
+                        to={`/orders/${ord.id}`}
+                        className="btn-secondary"
+                        style={{ padding: '3px 8px', fontSize: '0.75rem', textDecoration: 'none' }}
+                      >
+                        Details
+                      </Link>
+                      {rawStatus === 'PENDING' && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+                            onClick={() => handleAcceptOrder(ord.id)}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ padding: '3px 8px', fontSize: '0.75rem', color: '#dc2626' }}
+                            onClick={() => handleCancelOrder(ord.id)}
+                          >
+                            Cancel
+                          </button>
+                        </>
                       )}
-                      {status === 'accepted' && (
+                      {rawStatus === 'CONFIRMED' && (
                         <button
                           type="button"
                           className="btn-primary"
-                          style={{ padding: '4px 10px', fontSize: '0.75rem', background: '#0284c7' }}
+                          style={{ padding: '3px 8px', fontSize: '0.75rem', background: '#0284c7' }}
                           onClick={() => handleStartOrder(ord.id)}
                         >
                           Start Work
                         </button>
                       )}
-                      {status === 'in_progress' && (
+                      {(rawStatus === 'IN_PROGRESS' || rawStatus === 'REVISION_REQUESTED') && (
                         <button
                           type="button"
                           className="btn-primary"
-                          style={{ padding: '4px 10px', fontSize: '0.75rem', background: '#16a34a' }}
+                          style={{ padding: '3px 8px', fontSize: '0.75rem', background: '#16a34a' }}
                           onClick={() => {
                             setDeliverModalOrder(ord);
                             setDeliveryMessage('');
@@ -288,14 +375,19 @@ export default function SellerDashboardPage({ onNotice }) {
                           Deliver Work
                         </button>
                       )}
-                      {status === 'delivered' && (
+                      {rawStatus === 'DELIVERED' && (
                         <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>
                           Awaiting Review
                         </span>
                       )}
-                      {status === 'completed' && (
+                      {rawStatus === 'COMPLETED' && (
                         <span style={{ fontSize: '0.75rem', color: '#475569', fontWeight: 600 }}>
                           Completed
+                        </span>
+                      )}
+                      {rawStatus === 'CANCELLED' && (
+                        <span style={{ fontSize: '0.75rem', color: '#dc2626', fontWeight: 600 }}>
+                          Cancelled
                         </span>
                       )}
                     </div>
@@ -303,6 +395,13 @@ export default function SellerDashboardPage({ onNotice }) {
                 </tr>
               );
             })}
+            {ordersList.length === 0 && (
+              <tr>
+                <td colSpan="6" style={{ textAlign: 'center', padding: '32px', color: '#64748b' }}>
+                  No orders found.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -318,6 +417,20 @@ export default function SellerDashboardPage({ onNotice }) {
     'Earnings',
     'Profile',
   ];
+
+  // Calculated Analytics Values
+  const effectiveOrders = allOrders.length > 0 ? allOrders : dashboardData.recent_orders;
+  const completedOrdersCount = dashboardData.completed_orders || effectiveOrders.filter(o => o.status?.toUpperCase() === 'COMPLETED').length;
+  const totalOrdersCount = dashboardData.orders || effectiveOrders.length;
+  const activeOrdersCount = dashboardData.active_orders || effectiveOrders.filter(o => !['COMPLETED', 'CANCELLED', 'REFUNDED'].includes(o.status?.toUpperCase())).length;
+  
+  // Escrow pending: sum of non-completed orders
+  const pendingEscrow = effectiveOrders
+    .filter(o => ['CONFIRMED', 'IN_PROGRESS', 'DELIVERED', 'REVISION_REQUESTED'].includes(o.status?.toUpperCase()))
+    .reduce((sum, o) => sum + Number(o.amount || 0), 0);
+
+  const avgOrderValue = completedOrdersCount > 0 ? (dashboardData.revenue / completedOrdersCount).toFixed(2) : (0).toFixed(2);
+  const completionRate = totalOrdersCount > 0 ? ((completedOrdersCount / totalOrdersCount) * 100).toFixed(1) : (100).toFixed(1);
 
   return (
     <div className="dashboard-layout">
@@ -364,7 +477,7 @@ export default function SellerDashboardPage({ onNotice }) {
               </div>
               <div className="stat-card">
                 <div className="stat-label">Total Orders</div>
-                <div className="stat-value">{dashboardData.orders_count}</div>
+                <div className="stat-value">{totalOrdersCount}</div>
               </div>
               <div className="stat-card">
                 <div className="stat-label">Storefront Views</div>
@@ -372,11 +485,11 @@ export default function SellerDashboardPage({ onNotice }) {
               </div>
               <div className="stat-card">
                 <div className="stat-label">Client Rating</div>
-                <div className="stat-value">★ {dashboardData.rating}</div>
+                <div className="stat-value">★ {dashboardData.rating || 0}</div>
               </div>
             </div>
 
-            {renderActiveOrders()}
+            {renderOrdersTable(dashboardData.recent_orders, 'Recent Orders')}
 
             <div className="content-block">
               <div className="dash-header-row" style={{ marginBottom: '16px' }}>
@@ -397,44 +510,18 @@ export default function SellerDashboardPage({ onNotice }) {
                       <div className="service-card-body">
                         <h3 className="service-card-title">{srv.title}</h3>
                         <div className="service-card-footer">
-                          <span className={`badge ${srv.status === 'published' ? 'badge-toprated' : ''}`}>
-                            {srv.status ? srv.status.toUpperCase() : 'ACTIVE'}
+                          <span className={`badge ${srv.status?.toUpperCase() === 'PUBLISHED' ? 'badge-toprated' : ''}`}>
+                            {srv.status ? srv.status.toUpperCase() : 'PUBLISHED'}
                           </span>
-                          <span className="price-amount">${srv.packages?.[0]?.price || srv.price || 50}</span>
+                          <span className="price-amount">${srv.packages?.[0]?.price || srv.price || 0}</span>
                         </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <>
-                    <div className="service-card">
-                      <div className="service-card-body">
-                        <h3 className="service-card-title">Professional Website Design</h3>
-                        <div className="service-card-footer">
-                          <span className="badge badge-toprated">PUBLISHED</span>
-                          <span className="price-amount">$120</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="service-card">
-                      <div className="service-card-body">
-                        <h3 className="service-card-title">Cinematic 4K Video Editing</h3>
-                        <div className="service-card-footer">
-                          <span className="badge badge-toprated">PUBLISHED</span>
-                          <span className="price-amount">$80</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="service-card">
-                      <div className="service-card-body">
-                        <h3 className="service-card-title">Modern Minimalist Logo Design</h3>
-                        <div className="service-card-footer">
-                          <span className="badge badge-toprated">PUBLISHED</span>
-                          <span className="price-amount">$40</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
+                  <div style={{ textAlign: 'center', padding: '32px', color: '#64748b', gridColumn: '1 / -1' }}>
+                    No services created yet. Click "+ Create New Service" to get started!
+                  </div>
                 )}
               </div>
             </div>
@@ -448,7 +535,7 @@ export default function SellerDashboardPage({ onNotice }) {
               <div>
                 <h2 className="block-title" style={{ margin: 0 }}>All Services &amp; Storefronts</h2>
                 <p style={{ color: '#64748b', fontSize: '0.9rem' }}>
-                  Manage, pause, or edit your service storefront listings.
+                  Manage, pause, edit, or delete your service storefront listings.
                 </p>
               </div>
               <Link to="/seller/services/new" className="btn-primary" style={{ textDecoration: 'none' }}>
@@ -458,29 +545,49 @@ export default function SellerDashboardPage({ onNotice }) {
 
             {myServices.length > 0 ? (
               <div className="services-grid">
-                {myServices.map((srv) => (
-                  <div key={srv.id} className="service-card">
-                    <div className="service-card-body">
-                      <h3 className="service-card-title">{srv.title}</h3>
-                      <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '12px' }}>
-                        {srv.description?.slice(0, 80)}...
-                      </p>
-                      <div className="service-card-footer" style={{ borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
-                        <span className={`badge ${srv.status === 'published' ? 'badge-toprated' : ''}`}>
-                          {srv.status ? srv.status.toUpperCase() : 'PUBLISHED'}
-                        </span>
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          style={{ fontSize: '0.78rem', padding: '4px 10px' }}
-                          onClick={() => handleToggleServiceStatus(srv)}
-                        >
-                          {srv.status === 'published' ? 'Pause' : 'Publish'}
-                        </button>
+                {myServices.map((srv) => {
+                  const isPub = srv.status?.toUpperCase() === 'PUBLISHED';
+                  return (
+                    <div key={srv.id} className="service-card">
+                      <div className="service-card-body">
+                        <h3 className="service-card-title">{srv.title}</h3>
+                        <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '12px' }}>
+                          {srv.description?.slice(0, 90)}...
+                        </p>
+                        <div className="service-card-footer" style={{ borderTop: '1px solid #f1f5f9', paddingTop: '10px' }}>
+                          <span className={`badge ${isPub ? 'badge-toprated' : ''}`}>
+                            {srv.status ? srv.status.toUpperCase() : 'PUBLISHED'}
+                          </span>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <Link
+                              to={`/seller/services/${srv.id}/edit`}
+                              className="btn-secondary"
+                              style={{ fontSize: '0.78rem', padding: '4px 10px', textDecoration: 'none' }}
+                            >
+                              Edit
+                            </Link>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.78rem', padding: '4px 10px' }}
+                              onClick={() => handleToggleServiceStatus(srv)}
+                            >
+                              {isPub ? 'Pause' : 'Publish'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ fontSize: '0.78rem', padding: '4px 8px', color: '#dc2626', borderColor: '#fca5a5' }}
+                              onClick={() => handleDeleteService(srv.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '40px', background: '#f8fafc', borderRadius: '12px' }}>
@@ -497,7 +604,7 @@ export default function SellerDashboardPage({ onNotice }) {
         )}
 
         {/* ── TAB: ORDERS ─────────────────────────────────────────── */}
-        {activeTab === 'Orders' && renderActiveOrders()}
+        {activeTab === 'Orders' && renderOrdersTable(allOrders.length > 0 ? allOrders : dashboardData.recent_orders, 'All Seller Orders')}
 
         {/* ── TAB: MESSAGES ───────────────────────────────────────── */}
         {activeTab === 'Messages' && (
@@ -518,69 +625,113 @@ export default function SellerDashboardPage({ onNotice }) {
                   onClick={() => setActiveThreadIndex(i)}
                 >
                   <div className="inbox-avatar" style={{ background: '#4f46e5' }}>
-                    {c.initials || (c.name || 'CL').substring(0, 2).toUpperCase()}
+                    {(c.name || `C${c.id}`).substring(0, 2).toUpperCase()}
                   </div>
                   <div className="inbox-thread-meta">
                     <div className="inbox-thread-top">
-                      <span className="inbox-thread-name">{c.name || `Client #${c.id}`}</span>
-                      <span className="inbox-thread-time">{c.time || 'Today'}</span>
+                      <span className="inbox-thread-name">{c.name || `Client #${c.buyer_id || c.id}`}</span>
+                      <span className="inbox-thread-time">{c.updated_at ? new Date(c.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today'}</span>
                     </div>
-                    <div className="inbox-thread-service">{c.service || 'Marketplace Order'}</div>
-                    <div className="inbox-thread-preview">{c.preview || 'Click to view conversation'}</div>
+                    <div className="inbox-thread-service">{c.order_id ? `Order #${c.order_id}` : 'Direct Conversation'}</div>
+                    <div className="inbox-thread-preview">{c.last_message || 'Open conversation'}</div>
                   </div>
-                  {c.unread > 0 && <span className="inbox-unread-badge">{c.unread}</span>}
+                  {c.unread_count > 0 && <span className="inbox-unread-badge">{c.unread_count}</span>}
                 </button>
               ))}
+              {conversations.length === 0 && (
+                <div style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                  No conversations yet. When buyers message you or place orders, chats will appear here.
+                </div>
+              )}
             </div>
 
             <div className="inbox-chat">
-              <div className="inbox-chat-header">
-                <div className="inbox-avatar" style={{ background: '#4f46e5', width: '38px', height: '38px' }}>
-                  {conversations[activeThreadIndex]?.initials || 'CL'}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700 }}>
-                    {conversations[activeThreadIndex]?.name || 'Client'}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {conversations[activeThreadIndex]?.service || 'Direct Chat'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="inbox-messages">
-                {messages.map((m, idx) => {
-                  const isMine = m.from === 'me' || m.sender_id === currentUser?.id;
-                  return (
-                    <div key={idx} className={`inbox-bubble-row ${isMine ? 'mine' : 'theirs'}`}>
-                      <div className="inbox-bubble-wrap">
-                        <div className={`inbox-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}>
-                          {m.text || m.content}
+              {conversations.length > 0 ? (
+                <>
+                  <div className="inbox-chat-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div className="inbox-avatar" style={{ background: '#4f46e5', width: '38px', height: '38px' }}>
+                        {(conversations[activeThreadIndex]?.name || 'CL').substring(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>
+                          {conversations[activeThreadIndex]?.name || `Client #${conversations[activeThreadIndex]?.buyer_id || ''}`}
                         </div>
-                        <span className="inbox-bubble-ts">{m.ts || 'Today'}</span>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {conversations[activeThreadIndex]?.order_id ? `Order #${conversations[activeThreadIndex].order_id}` : 'Direct Chat'}
+                        </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              <form className="inbox-composer" onSubmit={handleSendMessage}>
-                <input
-                  type="text"
-                  className="inbox-input"
-                  placeholder="Type a response to client..."
-                  value={msgInput}
-                  onChange={(e) => setMsgInput(e.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="btn-primary"
-                  style={{ padding: '10px 20px', borderRadius: '12px' }}
-                  disabled={isSendingMsg}
-                >
-                  Send
-                </button>
-              </form>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+                        onClick={() => {
+                          const otherId = conversations[activeThreadIndex]?.buyer_id === currentUser?.id ? conversations[activeThreadIndex]?.seller_id : conversations[activeThreadIndex]?.buyer_id;
+                          setReportTarget(otherId);
+                        }}
+                      >
+                        🚩 Report
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', color: '#dc2626' }}
+                        onClick={handleBlockUserInChat}
+                      >
+                        🚫 Block
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="inbox-messages">
+                    {messages.map((m, idx) => {
+                      const isMine = m.from === 'me' || m.sender_id === currentUser?.id;
+                      return (
+                        <div key={idx} className={`inbox-bubble-row ${isMine ? 'mine' : 'theirs'}`}>
+                          <div className="inbox-bubble-wrap">
+                            <div className={`inbox-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}>
+                              {m.content || m.text}
+                            </div>
+                            <span className="inbox-bubble-ts">
+                              {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (m.ts || 'Now')}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {messages.length === 0 && (
+                      <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+                        Start of your conversation. Send a message below!
+                      </div>
+                    )}
+                  </div>
+
+                  <form className="inbox-composer" onSubmit={handleSendMessage}>
+                    <input
+                      type="text"
+                      className="inbox-input"
+                      placeholder="Type a response to client..."
+                      value={msgInput}
+                      onChange={(e) => setMsgInput(e.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      style={{ padding: '10px 20px', borderRadius: '12px' }}
+                      disabled={isSendingMsg}
+                    >
+                      Send
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                  Select or start a conversation to view messages.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -592,23 +743,27 @@ export default function SellerDashboardPage({ onNotice }) {
             <div className="stats-cards-grid" style={{ marginBottom: '24px' }}>
               <div className="stat-card">
                 <div className="stat-label">Net Cleared Earnings</div>
-                <div className="stat-value" style={{ color: '#16a34a' }}>${dashboardData.revenue}</div>
+                <div className="stat-value" style={{ color: '#16a34a' }}>
+                  ${dashboardData.revenue}
+                </div>
               </div>
               <div className="stat-card">
                 <div className="stat-label">Pending In Escrow</div>
-                <div className="stat-value" style={{ color: '#0284c7' }}>$240</div>
+                <div className="stat-value" style={{ color: '#0284c7' }}>
+                  ${pendingEscrow.toFixed(2)}
+                </div>
               </div>
               <div className="stat-card">
                 <div className="stat-label">Average Order Value</div>
-                <div className="stat-value">$64.50</div>
+                <div className="stat-value">${avgOrderValue}</div>
               </div>
               <div className="stat-card">
                 <div className="stat-label">Completion Rate</div>
-                <div className="stat-value">98.2%</div>
+                <div className="stat-value">{completionRate}%</div>
               </div>
             </div>
             <p style={{ color: '#64748b', fontSize: '0.9rem' }}>
-              DUMMR automatically disburses cleared payments directly to your connected bank account.
+              DUMMR automatically disburses cleared payments directly to your connected bank account upon order completion.
             </p>
           </div>
         )}
@@ -692,6 +847,65 @@ export default function SellerDashboardPage({ onNotice }) {
                   disabled={isDelivering}
                 >
                   {isDelivering ? 'Submitting Delivery...' : 'Submit Final Delivery'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {reportTarget && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: '16px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '24px',
+            }}
+          >
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '8px' }}>Report User</h3>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '16px' }}>
+              Describe the issue or policy violation (e.g. spam, harassment, fraudulent activity).
+            </p>
+            <form onSubmit={handleReportUserInChat}>
+              <textarea
+                rows="4"
+                className="form-textarea"
+                placeholder="Reason for report..."
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                required
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setReportTarget(null)}
+                  disabled={isReporting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  style={{ background: '#dc2626' }}
+                  disabled={isReporting}
+                >
+                  {isReporting ? 'Submitting...' : 'Submit Report'}
                 </button>
               </div>
             </form>

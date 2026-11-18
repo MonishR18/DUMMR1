@@ -12,6 +12,19 @@ ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
 ALLOWED_DOC_TYPES = {"application/pdf", "application/zip", "application/x-zip-compressed"}
 ALL_ALLOWED_TYPES = ALLOWED_IMAGE_TYPES | ALLOWED_VIDEO_TYPES | ALLOWED_DOC_TYPES
 
+MIME_TO_EXTENSIONS = {
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/png": {".png"},
+    "image/webp": {".webp"},
+    "image/gif": {".gif"},
+    "video/mp4": {".mp4"},
+    "video/webm": {".webm"},
+    "video/quicktime": {".mov", ".qt"},
+    "application/pdf": {".pdf"},
+    "application/zip": {".zip"},
+    "application/x-zip-compressed": {".zip"},
+}
+
 MAX_IMAGE_SIZE = 10 * 1024 * 1024       # 10 MB
 MAX_VIDEO_SIZE = 100 * 1024 * 1024     # 100 MB
 
@@ -22,8 +35,30 @@ def ensure_upload_dir(subfolder: str = "media") -> str:
     os.makedirs(folder, exist_ok=True)
     return folder
 
+def validate_magic_bytes(content: bytes, content_type: str) -> bool:
+    """Validate content bytes match known file signatures (magic bytes)."""
+    if len(content) < 4:
+        return False
+    if content_type == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    elif content_type == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    elif content_type == "image/gif":
+        return content.startswith(b"GIF87a") or content.startswith(b"GIF89a")
+    elif content_type == "image/webp":
+        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    elif content_type == "application/pdf":
+        return content.startswith(b"%PDF")
+    elif content_type in ("application/zip", "application/x-zip-compressed"):
+        return content.startswith(b"PK\x03\x04") or content.startswith(b"PK\x05\x06") or content.startswith(b"PK\x07\x08")
+    elif content_type in ("video/mp4", "video/quicktime"):
+        return len(content) >= 8 and content[4:8] == b"ftyp"
+    elif content_type == "video/webm":
+        return content.startswith(b"\x1a\x45\xdf\xa3")
+    return False
+
 async def save_upload_file(file: UploadFile, subfolder: str = "media") -> Dict[str, Any]:
-    """Validate and store an uploaded file. Returns file metadata and access URL."""
+    """Validate and store an uploaded file with MIME, extension, and magic-byte checks."""
     content_type = file.content_type or "application/octet-stream"
     
     if content_type not in ALL_ALLOWED_TYPES:
@@ -32,7 +67,39 @@ async def save_upload_file(file: UploadFile, subfolder: str = "media") -> Dict[s
             detail=f"Unsupported file type '{content_type}'. Allowed: images (jpeg, png, webp, gif), videos (mp4, webm), or documents (pdf, zip).",
         )
 
-    # Read content to check file size
+    # Cross-validate file extension against declared MIME type
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    allowed_exts = MIME_TO_EXTENSIONS.get(content_type, set())
+    if ext:
+        if ext not in allowed_exts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File extension '{ext}' does not match content type '{content_type}'. Allowed: {sorted(list(allowed_exts))}",
+            )
+    else:
+        # Default extension if omitted in filename
+        if content_type == "image/jpeg":
+            ext = ".jpg"
+        elif content_type == "image/png":
+            ext = ".png"
+        elif content_type == "image/webp":
+            ext = ".webp"
+        elif content_type == "image/gif":
+            ext = ".gif"
+        elif content_type == "video/mp4":
+            ext = ".mp4"
+        elif content_type == "video/webm":
+            ext = ".webm"
+        elif content_type == "video/quicktime":
+            ext = ".mov"
+        elif content_type == "application/pdf":
+            ext = ".pdf"
+        elif content_type in ("application/zip", "application/x-zip-compressed"):
+            ext = ".zip"
+        else:
+            ext = ".bin"
+
+    # Read content to check file size and magic bytes
     content = await file.read()
     file_size = len(content)
 
@@ -44,24 +111,14 @@ async def save_upload_file(file: UploadFile, subfolder: str = "media") -> Dict[s
             detail=f"File exceeds maximum allowed size of {limit_mb}MB.",
         )
 
-    # Generate unique filename
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if not ext:
-        if content_type == "image/jpeg":
-            ext = ".jpg"
-        elif content_type == "image/png":
-            ext = ".png"
-        elif content_type == "image/webp":
-            ext = ".webp"
-        elif content_type == "video/mp4":
-            ext = ".mp4"
-        elif content_type == "application/pdf":
-            ext = ".pdf"
-        elif content_type == "application/zip":
-            ext = ".zip"
-        else:
-            ext = ".bin"
+    # Magic byte verification
+    if not validate_magic_bytes(content, content_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File content does not match declared type '{content_type}' (magic byte check failed).",
+        )
 
+    # Generate secure unique filename
     unique_filename = f"{uuid.uuid4().hex}{ext}"
 
     # Handle S3 storage if configured
@@ -100,7 +157,12 @@ async def save_upload_file(file: UploadFile, subfolder: str = "media") -> Dict[s
     with open(file_path, "wb") as f:
         f.write(content)
 
-    file_url = f"/static/uploads/{subfolder}/{unique_filename}"
+    # Delivery files use authenticated download endpoint; others are static
+    if subfolder == "deliveries":
+        file_url = f"/api/storage/deliveries/{unique_filename}"
+    else:
+        file_url = f"/static/uploads/{subfolder}/{unique_filename}"
+
     return {
         "url": file_url,
         "filename": unique_filename,

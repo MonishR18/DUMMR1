@@ -16,6 +16,11 @@ import AuthPage from './AuthPage';
 import SellerDashboardPage from './pages/SellerDashboardPage';
 import BuyerDashboardPage from './pages/BuyerDashboardPage';
 import CreateServicePage from './pages/CreateServicePage';
+import EditServicePage from './pages/EditServicePage';
+import OrderDetailPage from './pages/OrderDetailPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 
 export default function App() {
   const [notification, setNotification] = useState('');
@@ -49,16 +54,28 @@ export default function App() {
                 path="/signup"
                 element={<AuthPage initialMode="signup" onAuthSuccess={(_, mode) => triggerNotice(mode === 'signup' ? 'Welcome to DUMMR! Your account is ready.' : 'Welcome back!')} />}
               />
+              <Route path="/verify-email" element={<VerifyEmailPage onNotice={triggerNotice} />} />
+              <Route path="/reset-password" element={<ResetPasswordPage onNotice={triggerNotice} />} />
 
               {/* Dynamic Redirects */}
               <Route path="/orders" element={<OrdersRedirect />} />
               <Route path="/messages" element={<MessagesRedirect />} />
 
+              {/* Protected Order Detail */}
+              <Route
+                path="/orders/:id"
+                element={
+                  <ProtectedRoute allowedRoles={['client', 'provider', 'admin']}>
+                    <OrderDetailPage onNotice={triggerNotice} />
+                  </ProtectedRoute>
+                }
+              />
+
               {/* Protected Provider Routes */}
               <Route
                 path="/seller/dashboard"
                 element={
-                  <ProtectedRoute allowedRoles={['provider']}>
+                  <ProtectedRoute allowedRoles={['provider', 'admin']}>
                     <SellerDashboardPage onNotice={triggerNotice} />
                   </ProtectedRoute>
                 }
@@ -66,21 +83,40 @@ export default function App() {
               <Route
                 path="/seller/services/new"
                 element={
-                  <ProtectedRoute allowedRoles={['provider']}>
+                  <ProtectedRoute allowedRoles={['provider', 'admin']}>
                     <CreateServicePage onNotice={triggerNotice} />
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/seller/services/:id/edit"
+                element={
+                  <ProtectedRoute allowedRoles={['provider', 'admin']}>
+                    <EditServicePage onNotice={triggerNotice} />
+                  </ProtectedRoute>
+                }
+              />
 
-              {/* Protected Buyer Routes (clients and providers can browse their buyer hub) */}
+              {/* Protected Buyer Routes */}
               <Route
                 path="/buyer/dashboard"
                 element={
-                  <ProtectedRoute allowedRoles={['client', 'provider']}>
+                  <ProtectedRoute allowedRoles={['client', 'provider', 'admin']}>
                     <BuyerDashboardPage onNotice={triggerNotice} />
                   </ProtectedRoute>
                 }
               />
+
+              {/* Protected Admin Routes */}
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AdminDashboardPage onNotice={triggerNotice} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="/admin/dashboard" element={<Navigate to="/admin" replace />} />
 
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

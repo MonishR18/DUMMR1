@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import './AuthPage.css';
 import { useAuth } from './context/AuthContext';
 import { forgotPassword } from './api';
+import dummrLogo from './assets/dummrlogo.png';
 
 export default function AuthPage({ initialMode = 'signin', onAuthSuccess, onBack }) {
   const navigate = useNavigate();
@@ -102,7 +103,9 @@ export default function AuthPage({ initialMode = 'signin', onAuthSuccess, onBack
         onAuthSuccess(userProfile, isSignUp ? 'signup' : 'signin');
       }
 
-      const returnPath = location.state?.from?.pathname || (userProfile.role === 'provider' ? '/seller/dashboard' : '/');
+      const userRole = (userProfile.role || '').toLowerCase();
+      const defaultPath = userRole === 'admin' ? '/admin' : userRole === 'provider' ? '/seller/dashboard' : '/buyer/dashboard';
+      const returnPath = location.state?.from?.pathname || defaultPath;
       navigate(returnPath, { replace: true });
     } catch (err) {
       setErrorMsg(err.message || 'Authentication failed. Please check your credentials.');
@@ -141,12 +144,7 @@ export default function AuthPage({ initialMode = 'signin', onAuthSuccess, onBack
         <div className="auth-sidebar-hero">
           <div>
             <div className="auth-brand-badge" onClick={handleBackToHome} style={{ cursor: 'pointer' }}>
-              <svg width="18" height="14" viewBox="0 0 27 17" fill="none">
-                <ellipse cx="13.25" cy="8.4" rx="13.2" ry="2.9" transform="rotate(-25 13.25 8.4)" stroke="currentColor" strokeWidth="1.25"/>
-                <circle cx="13.25" cy="8.4" r="8.8" fill="#0f172a"/>
-                <circle cx="13.25" cy="8.4" r="8.1" fill="currentColor"/>
-              </svg>
-              <span>DUMMR SERVICES</span>
+              <img src={dummrLogo} alt="DUMMR Services" className="auth-brand-logo" />
             </div>
 
             <div className="auth-hero-main">

@@ -75,6 +75,19 @@ app.include_router(blocks.router)
 app.include_router(storage.router)
 app.include_router(payments.router)
 
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from core.database import SessionLocal
+from core.redis import get_redis_client, InMemoryCache
+
+# Block unauthenticated public access to delivery files
+@app.get("/static/uploads/deliveries/{path:path}")
+def block_unauthenticated_delivery_access(path: str):
+    return JSONResponse(
+        status_code=403,
+        content={"detail": "Delivery files require authenticated access via /api/storage/deliveries/{filename}"}
+    )
+
 # Mount local upload directory for static serving
 uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploads"))
 os.makedirs(uploads_dir, exist_ok=True)
@@ -86,9 +99,29 @@ def read_root():
 
 @app.get("/health", tags=["health"])
 def health_check():
+    db_status = "ok"
+    redis_status = "ok"
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+
+    try:
+        r_client = get_redis_client()
+        if isinstance(r_client, InMemoryCache):
+            redis_status = "in-memory-fallback"
+        else:
+            r_client.ping()
+    except Exception as e:
+        redis_status = f"unhealthy: {str(e)}"
+
+    overall = "ok" if (db_status == "ok" and "unhealthy" not in redis_status) else "degraded"
     return {
-        "status": "ok",
+        "status": overall,
         "service": "DUMMR API",
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT,
+        "database": db_status,
+        "redis": redis_status,
     }
